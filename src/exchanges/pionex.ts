@@ -2,9 +2,9 @@ import type { Adapter, HourBar, Ticker } from '../types';
 import { getJson, isRecord, num, shapeError } from '../lib/http';
 
 // Pionex's API sends no CORS headers (verified 2026-11-15), so a browser cannot
-// call it directly. Requests go through the same-origin proxy in
-// server/pionexProxy.ts (run by the Worker in worker/), or the Vite dev-server
-// proxy while developing.
+// call it directly. Requests go through the proxy in server/pionexProxy.ts, or
+// the Vite dev-server proxy while developing. Set VITE_PIONEX_BASE to the
+// proxy's URL when it lives on another host.
 const BASE = import.meta.env?.VITE_PIONEX_BASE ?? '/api/pionex';
 const SUFFIX = '_USDT_PERP';
 

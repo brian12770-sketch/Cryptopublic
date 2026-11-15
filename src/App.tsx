@@ -6,12 +6,11 @@ import { useTrending } from './lib/trending';
 import { ExchangePanel } from './components/ExchangePanel';
 import { Trending } from './components/Trending';
 
-type Tab = 'binance' | 'okx' | 'pionex' | 'trending';
+type Tab = 'binance' | 'okx' | 'trending';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'binance', label: '幣安' },
   { id: 'okx', label: 'OKX' },
-  { id: 'pionex', label: 'Pionex' },
   { id: 'trending', label: '熱搜' },
 ];
 
@@ -58,7 +57,7 @@ function useWide(): boolean {
 export function App() {
   const [mode, setMode] = useState<Mode>(() => stored('mode', ['heat', 'change'] as const, 'heat'));
   const [upColor, setUpColor] = useState<UpColor>(() => stored('upColor', ['green', 'red'] as const, 'green'));
-  const [tab, setTab] = useState<Tab>(() => stored('tab', ['binance', 'okx', 'pionex', 'trending'] as const, 'binance'));
+  const [tab, setTab] = useState<Tab>(() => stored('tab', ['binance', 'okx', 'trending'] as const, 'binance'));
   const wide = useWide();
   const now = useNow(1000);
 
@@ -72,8 +71,7 @@ export function App() {
   // The hooks run for every exchange; off-screen ones poll slowly to save data.
   const binance = useExchange(ADAPTERS[0], wide || tab === 'binance');
   const okx = useExchange(ADAPTERS[1], wide || tab === 'okx');
-  const pionex = useExchange(ADAPTERS[2], wide || tab === 'pionex');
-  const exchanges = [binance, okx, pionex];
+  const exchanges = [binance, okx];
   const trending = useTrending();
 
   return (
@@ -110,7 +108,7 @@ export function App() {
         </nav>
       )}
 
-      <main className={wide ? 'grid is-wide' : 'grid'}>
+      <main className={wide ? `grid is-wide cols-${exchanges.length}` : 'grid'}>
         {exchanges.map(
           (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} />,
         )}

@@ -1,4 +1,5 @@
-// Same-origin proxy for Pionex public market data.
+// Proxy for Pionex public market data. Not wired in at the moment: it must run
+// on a host outside Cloudflare (see worker/index.ts), mounted at /api/pionex/.
 // Pionex sends no CORS headers, so the browser cannot call it directly.
 // Read-only by construction: GET only, two market endpoints, no credentials.
 

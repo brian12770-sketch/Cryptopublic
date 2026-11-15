@@ -5,8 +5,13 @@
 
 ## 這個專案是什麼
 
-前端網站加一小段 Cloudflare Worker 轉接，顯示幣安、OKX、Pionex 三間交易所 USDT 永續合約的報價、成交額熱力圖與量能異常，
+前端網站，以一支 Cloudflare Worker 提供，顯示幣安、OKX 兩間交易所 USDT 永續合約的報價、成交額熱力圖與量能異常，
 外加 CoinGecko 熱搜。手機與桌機並重。
+
+**Pionex 區塊目前關閉**（使用者 2026-11-15 決定）：Pionex 拒絕 Cloudflare Workers 的請求，要等使用者另外準備主機放轉接。
+`src/exchanges/pionex.ts`、`server/pionexProxy.ts` 與相關測試都保留著。恢復時：把轉接部署到非 Cloudflare 的主機、
+建置時設 `VITE_PIONEX_BASE` 指向它（轉接要加 CORS 標頭）、在 `src/exchanges/index.ts` 把 `pionex` 加回 `ADAPTERS`、
+在 `src/App.tsx` 加回分頁與 `useExchange` 呼叫。
 
 - 幣種範圍：每間交易所 24 小時成交額前 50 名的 USDT 永續合約。
 - 熱力圖兩種模式：量能異常（預設）、漲跌幅。方塊面積是成交額的開根號比例。
@@ -17,7 +22,7 @@
 
 1. **不下單、不碰帳戶。** 只讀公開行情。不寫任何下單、撤單、劃轉的程式，不接需要金鑰的 API。
 2. **金鑰與密碼不進 repo、不進對話。** 這個 repo 是公開的。
-3. **Pionex 轉接只放行 `market/tickers` 與 `market/klines` 的 GET。** 要新增端點先問使用者。
+3. **Pionex 轉接（恢復後）只放行 `market/tickers` 與 `market/klines` 的 GET。** 要新增端點先問使用者。
 
 ## 資料紀律
 
@@ -35,16 +40,16 @@
   所以 OKX 的 24 小時成交額是近似值，畫面上以「≈」標示。K 線的 `volCcyQuote`（第 8 欄）才是 USDT。
 - Pionex `tickers` 的 `amount` 是 USDT 成交額；K 線只有幣數，成交額以幣數 × 該棒代表價估算。
   Pionex 還有以 BTC、ETH 等計價的永續合約與美股代幣合約；只收 `_USDT_PERP` 結尾的。
-- Pionex API 不送 CORS 標頭，瀏覽器不能直接呼叫，所以有 `server/pionexProxy.ts` 這個同源轉接，由 `worker/index.ts` 在 `/api/pionex/*` 執行。
+- Pionex API 不送 CORS 標頭，瀏覽器不能直接呼叫，所以需要 `server/pionexProxy.ts` 這個轉接。
 - **Pionex 會拒絕從 Cloudflare Workers 發出的請求**：線上 Worker 轉接 Pionex 一律得到 HTTP 429，
   而同一時間從一般主機直接呼叫是 200。回應裡 Pionex 自己的限流額度是滿的（`x-ratelimit-tokens: 30`），
   加不加 User-Agent 都一樣，所以不是真的超量，而是 Workers 的出口被擋。Pionex 轉接必須放在非 Cloudflare 的主機。
-  目前線上的 Pionex 區塊因此顯示「中斷」。
+  Pionex 區塊因此先關閉。
 - 部署環境的金鑰代理會覆寫 Authorization 標頭，Workers／Pages 的靜態檔上傳（用臨時憑證）會 401。
   所以網站檔案是內嵌進 Worker 腳本一次上傳的（`scripts/gen-assets.mjs`），不用 wrangler 的 `assets` 設定。
 - OKX 與 CoinGecko 允許瀏覽器跨網域呼叫。
-- **幣安沒有在開發環境實測過**：開發用的雲端主機被幣安地區限制擋下（HTTP 451）。
-  幣安的解析程式與測試資料是照官方文件的欄位寫的，要在使用者自己的裝置上確認。
+- **幣安無法在開發環境實測**：開發用的雲端主機被幣安地區限制擋下（HTTP 451），解析程式與測試資料是照官方文件的欄位寫的。
+  使用者 2026-11-15 回報線上網站的幣安區塊在自己的裝置上正常更新。動到幣安的程式時，仍要請使用者在自己的裝置上確認。
 - 開發環境的代理不支援 WebSocket，所以第一版用輪詢。改 WebSocket 要在使用者裝置上驗證。
 
 ## 回測（第二階段，尚未開始）

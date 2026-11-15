@@ -72,7 +72,7 @@ export function Trending({ trending, exchanges, now }: Props) {
 
       <p className="meta">
         來源：CoinGecko 過去 24 小時被搜尋最多的幣，每 5 分鐘重抓。這是搜尋熱度，不是 X 或幣安廣場的貼文統計。
-        右側是該幣在三間交易所永續合約的量能倍數。
+        下方標籤是該幣在各交易所永續合約的量能倍數。
       </p>
 
       {(failedOnly || (stale && error)) && (

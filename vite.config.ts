@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // Stands in for the Worker (worker/index.ts) during development.
+      // Stands in for server/pionexProxy.ts during development.
       '/api/pionex': {
         target: 'https://api.pionex.com',
         changeOrigin: true,
