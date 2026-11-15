@@ -25,6 +25,12 @@ export function fmtPct(v: number): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`;
 }
 
+/** Taker buy/sell ratio: two decimals, since it lives close to 1. */
+export function fmtTaker(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  return v >= 10 ? v.toFixed(1) : v.toFixed(2);
+}
+
 export function fmtRatio(v: number): string {
   if (!Number.isFinite(v)) return '—';
   return `${v >= 10 ? v.toFixed(0) : v.toFixed(1)}×`;

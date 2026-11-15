@@ -1,13 +1,17 @@
-// Cloudflare Worker entry: serves the built site.
+// Cloudflare Worker entry: serves the built site and one small proxy.
 //
 // The site's files are inlined into this script (see scripts/gen-assets.mjs)
 // instead of using Workers static assets, so a deploy is one script upload
 // authenticated by the API token alone. The static-assets upload needs a
 // second, short-lived credential that the deploy environment cannot pass.
 //
-// There is no /api route here. Pionex rejects requests from Cloudflare Workers,
-// so its proxy (server/pionexProxy.ts) has to run on a host outside Cloudflare.
+// /api/okx/* relays two OKX statistics endpoints that browsers cannot call
+// (server/okxStats.ts). There is no Pionex route: Pionex rejects requests from
+// Cloudflare Workers, so its proxy (server/pionexProxy.ts) needs another host.
+import { proxyOkxStats } from '../server/okxStats';
 import { ASSETS, type Asset } from './assets.generated';
+
+const OKX_PREFIX = '/api/okx/';
 
 function serve(asset: Asset, path: string, method: string): Response {
   const body =
@@ -25,6 +29,7 @@ function serve(asset: Asset, path: string, method: string): Response {
 export default {
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
+    if (pathname.startsWith(OKX_PREFIX)) return proxyOkxStats(request, pathname.slice(OKX_PREFIX.length));
     if (pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('Method not allowed', { status: 405 });

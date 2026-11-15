@@ -1,14 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Adapter, HeatState, HourBar, Ticker } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import type { Adapter, Bar, Cell, Metrics, OiPoint, TakerPoint, Ticker } from '../types';
 import { FetchError } from './http';
-import { computeHeat, HOUR_MS, pool, topByTurnover } from './heat';
+import {
+  BAR_MS,
+  barAt,
+  computeOiChange,
+  oiAnchor,
+  computeReturn,
+  computeRvol,
+  lastClosedBarTime,
+  pool,
+  takerFromBars,
+  takerFromPoints,
+  topByTurnover,
+} from './metrics';
 
 /** Poll interval for an exchange whose panel is not on screen. */
 const BACKGROUND_POLL_MS = 60_000;
-/** Wait this long after the hour turns so the exchange has closed the bar. */
-const BAR_SETTLE_MS = 20_000;
-const KLINE_RETRY_MS = 60_000;
-const KLINE_CONCURRENCY = 3;
+/** Wait this long after a bar closes before asking for it. */
+const SETTLE_MS = 15_000;
+/** Statistics endpoints publish a bar late; ask again this often, this many times. */
+const LAG_RETRY_MS = 45_000;
+const LAG_TRIES = 5;
+const ERROR_RETRY_MS = 60_000;
+const HOUR_MS = 60 * 60 * 1000;
 
 export type Link = 'connecting' | 'live' | 'stale' | 'down';
 
@@ -20,17 +35,27 @@ export interface ExchangeData {
   listed: number;
   lastOk: number | null;
   error: string | null;
-  heat: Record<string, HeatState>;
-  /** Open time of the hourly bar the heat ratios describe, when known. */
-  heatBarTime: number | null;
+  metrics: Record<string, Metrics>;
+  /** Open time of the 15-minute bar the metrics describe. */
+  barTime: number | null;
 }
 
-interface BarCache {
-  hourKey: number;
-  bars: HourBar[] | null;
+/** One symbol's copy of one series (candles, open interest or taker volume). */
+interface Entry<T> {
+  data: T[] | null;
+  /** Bar the last request was made for. */
+  barTime: number;
+  /** Whether `data` already covers that bar. */
+  fresh: boolean;
+  tries: number;
+  fetchedAt: number;
   error: string | null;
-  failedAt: number;
 }
+
+type Series<T> = Map<string, Entry<T>>;
+
+const PENDING: Cell = { kind: 'pending' };
+const INSUFFICIENT: Cell = { kind: 'insufficient' };
 
 function message(err: unknown): string {
   if (err instanceof FetchError) return err.message;
@@ -45,19 +70,40 @@ export function linkOf(data: ExchangeData, now: number): Link {
   return age <= 45_000 ? 'stale' : 'down';
 }
 
+/** A symbol needs a request when it has no data for this bar, or the last try failed or came back short. */
+function isDue<T>(entry: Entry<T> | undefined, barTime: number, now: number): boolean {
+  if (!entry || entry.barTime !== barTime) return true;
+  if (entry.error) return now - entry.fetchedAt > ERROR_RETRY_MS;
+  return !entry.fresh && entry.tries < LAG_TRIES && now - entry.fetchedAt > LAG_RETRY_MS;
+}
+
+/**
+ * Turn a cached series into a cell: a failed request reads as failed, a
+ * series still catching up to the bar reads as pending, and only a series that
+ * has stopped retrying can read as insufficient.
+ */
+function cellFrom<T>(entry: Entry<T> | undefined, barTime: number, compute: (data: T[]) => Cell): Cell {
+  if (!entry || entry.barTime !== barTime) return PENDING;
+  if (entry.data === null) return entry.error ? { kind: 'failed', message: entry.error } : PENDING;
+  const cell = compute(entry.data);
+  if (cell.kind === 'insufficient') {
+    if (entry.error) return { kind: 'failed', message: entry.error };
+    if (!entry.fresh && entry.tries < LAG_TRIES) return PENDING;
+  }
+  return cell;
+}
+
 export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
   const [top, setTop] = useState<Ticker[]>([]);
   const [listed, setListed] = useState(0);
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [heat, setHeat] = useState<Record<string, HeatState>>({});
+  const [metrics, setMetrics] = useState<Record<string, Metrics>>({});
+  const [barTime, setBarTime] = useState<number | null>(null);
 
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const topRef = useRef<Ticker[]>([]);
-  const cache = useRef(new Map<string, BarCache>());
-  const inflight = useRef(new Set<string>());
-
   const kick = useRef<() => void>(() => {});
 
   // Ticker polling. Slows down for off-screen panels and stops for hidden pages.
@@ -114,65 +160,89 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
     wasVisible.current = visible;
   }, [visible]);
 
-  // Hourly candles for the volume-anomaly ratio.
+  // 15-minute candles, open interest and taker volume, refreshed as each bar closes.
   useEffect(() => {
     const ctrl = new AbortController();
+    const bars: Series<Bar> = new Map();
+    const oi: Series<OiPoint> = new Map();
+    const taker: Series<TakerPoint> = new Map();
+    const busy = { bars: false, oi: false, taker: false };
+
+    /** The bar to describe: the last one closed, once it has had time to settle. */
+    const target = () => lastClosedBarTime(Date.now() - SETTLE_MS);
 
     const publish = () => {
-      const now = Date.now();
-      const next: Record<string, HeatState> = {};
-      for (const t of topRef.current) {
-        const entry = cache.current.get(t.symbol);
-        if (!entry || (entry.bars === null && entry.error === null)) {
-          next[t.symbol] = { kind: 'pending' };
-        } else if (entry.bars === null) {
-          next[t.symbol] = { kind: 'failed', message: entry.error ?? '抓取失敗' };
-        } else {
-          const h = computeHeat(entry.bars, now);
-          next[t.symbol] = h ? { kind: 'ok', heat: h } : { kind: 'insufficient' };
-        }
+      const bar = target();
+      const close = bar + BAR_MS;
+      const next: Record<string, Metrics> = {};
+      for (const { symbol } of topRef.current) {
+        const b = bars.get(symbol);
+        next[symbol] = {
+          rvol: cellFrom(b, bar, (d) => computeRvol(d, bar)),
+          ret15: cellFrom(b, bar, (d) => computeReturn(d, bar)),
+          taker: adapter.fetchTaker
+            ? cellFrom(taker.get(symbol), bar, (d) => takerFromPoints(d, bar))
+            : cellFrom(b, bar, (d) => takerFromBars(d, bar)),
+          oi15: adapter.fetchOi ? cellFrom(oi.get(symbol), bar, (d) => computeOiChange(d, close, BAR_MS)) : INSUFFICIENT,
+          oi1h: adapter.fetchOi ? cellFrom(oi.get(symbol), bar, (d) => computeOiChange(d, close, HOUR_MS)) : INSUFFICIENT,
+          oiTime: oiAnchor(oi.get(symbol)?.data ?? [], close)?.t ?? null,
+        };
       }
-      setHeat(next);
+      setMetrics(next);
+      setBarTime(bar);
     };
 
-    const refresh = async () => {
-      if (document.hidden) return;
-      const now = Date.now();
-      const hourKey = Math.floor((now - BAR_SETTLE_MS) / HOUR_MS);
-      const due = topRef.current
-        .map((t) => t.symbol)
-        .filter((symbol) => {
-          if (inflight.current.has(symbol)) return false;
-          const entry = cache.current.get(symbol);
-          if (!entry) return true;
-          if (entry.bars === null) return now - entry.failedAt > KLINE_RETRY_MS;
-          return entry.hourKey !== hourKey;
-        });
+    async function refresh<T>(
+      name: keyof typeof busy,
+      series: Series<T>,
+      limit: number,
+      fetcher: ((symbol: string, signal: AbortSignal) => Promise<T[]>) | undefined,
+      covers: (data: T[], bar: number) => boolean,
+    ) {
+      if (!fetcher || busy[name] || document.hidden) return;
+      const bar = target();
+      const due = topRef.current.map((t) => t.symbol).filter((s) => isDue(series.get(s), bar, Date.now()));
       if (due.length === 0) return;
-      for (const s of due) inflight.current.add(s);
-      await pool(due, KLINE_CONCURRENCY, async (symbol) => {
-        try {
-          const bars = await adapter.fetchHourBars(symbol, ctrl.signal);
-          cache.current.set(symbol, { hourKey, bars, error: null, failedAt: 0 });
-        } catch (err) {
-          if (ctrl.signal.aborted) return;
-          const previous = cache.current.get(symbol);
-          // Keep the last good bars; computeHeat drops them once they go stale.
-          cache.current.set(symbol, {
-            hourKey: previous?.hourKey ?? -1,
-            bars: previous?.bars ?? null,
-            error: message(err),
-            failedAt: Date.now(),
-          });
-        } finally {
-          inflight.current.delete(symbol);
-        }
-        if (!ctrl.signal.aborted) publish();
-      });
+      busy[name] = true;
+      try {
+        await pool(due, limit, async (symbol) => {
+          const previous = series.get(symbol);
+          const tries = previous && previous.barTime === bar ? previous.tries + 1 : 1;
+          try {
+            const data = await fetcher(symbol, ctrl.signal);
+            series.set(symbol, { data, barTime: bar, fresh: covers(data, bar), tries, fetchedAt: Date.now(), error: null });
+          } catch (err) {
+            if (ctrl.signal.aborted) return;
+            // Keep the last good data; the metric functions ignore bars that are not the target.
+            series.set(symbol, {
+              data: previous?.data ?? null,
+              barTime: bar,
+              fresh: false,
+              tries,
+              fetchedAt: Date.now(),
+              error: message(err),
+            });
+          }
+          if (!ctrl.signal.aborted) publish();
+        });
+      } finally {
+        busy[name] = false;
+      }
+    }
+
+    const run = () => {
+      const { concurrency } = adapter;
+      void refresh('bars', bars, concurrency.bars, adapter.fetchBars.bind(adapter), (d, bar) => barAt(d, bar) !== undefined);
+      void refresh('oi', oi, concurrency.stats, adapter.fetchOi?.bind(adapter), (d, bar) =>
+        d.some((p) => p.t === bar + BAR_MS),
+      );
+      void refresh('taker', taker, concurrency.stats, adapter.fetchTaker?.bind(adapter), (d, bar) =>
+        d.some((p) => p.t === bar),
+      );
     };
 
     const loop = setInterval(() => {
-      void refresh();
+      run();
       publish();
     }, 10_000);
     // First run as soon as the first ticker response has arrived.
@@ -180,7 +250,7 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
       if (topRef.current.length > 0) {
         clearInterval(first);
         publish();
-        void refresh();
+        run();
       }
     }, 300);
 
@@ -191,13 +261,5 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
     };
   }, [adapter]);
 
-  const heatBarTime = useMemo(() => {
-    let latest: number | null = null;
-    for (const state of Object.values(heat)) {
-      if (state.kind === 'ok' && (latest === null || state.heat.barTime > latest)) latest = state.heat.barTime;
-    }
-    return latest;
-  }, [heat]);
-
-  return { adapter, top, listed, lastOk, error, heat, heatBarTime };
+  return { adapter, top, listed, lastOk, error, metrics, barTime };
 }

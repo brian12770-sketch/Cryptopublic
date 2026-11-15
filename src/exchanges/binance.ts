@@ -1,4 +1,4 @@
-import type { Adapter, HourBar, Ticker } from '../types';
+import type { Adapter, Bar, OiPoint, Ticker } from '../types';
 import { getJson, isRecord, num, shapeError } from '../lib/http';
 
 const BASE = 'https://fapi.binance.com';
@@ -37,14 +37,31 @@ export function parseBinanceTickers(json: unknown): Ticker[] {
   return out;
 }
 
-export function parseBinanceKlines(json: unknown): HourBar[] {
+export function parseBinanceKlines(json: unknown): Bar[] {
   if (!Array.isArray(json)) throw shapeError('幣安 K 線');
-  const out: HourBar[] = [];
+  const out: Bar[] = [];
   for (const row of json) {
     if (!Array.isArray(row)) continue;
     const t = num(row[0]);
+    const open = num(row[1]);
+    const close = num(row[4]);
     const turnover = num(row[7]); // quote asset volume, in USDT
-    if (Number.isFinite(t) && Number.isFinite(turnover)) out.push({ t, turnover });
+    const takerBuy = num(row[10]); // taker buy quote asset volume, in USDT
+    if (![t, open, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, close, turnover, takerBuy: Number.isFinite(takerBuy) ? takerBuy : null });
+  }
+  return out;
+}
+
+/** Each record is the open interest at its timestamp, which sits on a 15-minute boundary. */
+export function parseBinanceOi(json: unknown): OiPoint[] {
+  if (!Array.isArray(json)) throw shapeError('幣安未平倉量');
+  const out: OiPoint[] = [];
+  for (const r of json) {
+    if (!isRecord(r)) continue;
+    const t = num(r.timestamp);
+    const oi = num(r.sumOpenInterest); // in coins
+    if (Number.isFinite(t) && oi > 0) out.push({ t, oi });
   }
   return out;
 }
@@ -54,11 +71,16 @@ export const binance: Adapter = {
   name: '幣安',
   pollMs: 5000,
   turnoverNote: '交易所直接提供的 USDT 成交額',
+  concurrency: { bars: 3, stats: 3 },
   async fetchTickers(signal) {
     return parseBinanceTickers(await getJson(`${BASE}/fapi/v1/ticker/24hr`, signal));
   },
-  async fetchHourBars(symbol, signal) {
-    const url = `${BASE}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=1h&limit=170`;
+  async fetchBars(symbol, signal) {
+    const url = `${BASE}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=300`;
     return parseBinanceKlines(await getJson(url, signal));
+  },
+  async fetchOi(symbol, signal) {
+    const url = `${BASE}/futures/data/openInterestHist?symbol=${encodeURIComponent(symbol)}&period=15m&limit=8`;
+    return parseBinanceOi(await getJson(url, signal));
   },
 };

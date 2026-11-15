@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseBinanceKlines, parseBinanceTickers } from '../src/exchanges/binance';
-import { parseOkxCandles, parseOkxTickers } from '../src/exchanges/okx';
+import { parseBinanceKlines, parseBinanceOi, parseBinanceTickers } from '../src/exchanges/binance';
+import { parseOkxCandles, parseOkxOi, parseOkxTaker, parseOkxTickers } from '../src/exchanges/okx';
 import { parsePionexKlines, parsePionexTickers } from '../src/exchanges/pionex';
 import { parseTrending } from '../src/lib/trending';
 import { FetchError } from '../src/lib/http';
@@ -10,10 +10,13 @@ import { FetchError } from '../src/lib/http';
 // machine's region, so they were written by hand, not captured.
 import okxTickers from './fixtures/okx-tickers.json';
 import okxCandles from './fixtures/okx-candles.json';
+import okxOi from './fixtures/okx-oi.json';
+import okxTaker from './fixtures/okx-taker.json';
 import pionexTickers from './fixtures/pionex-tickers.json';
 import pionexKlines from './fixtures/pionex-klines.json';
 import binanceTickers from './fixtures/binance-tickers.json';
 import binanceKlines from './fixtures/binance-klines.json';
+import binanceOi from './fixtures/binance-oi.json';
 import trending from './fixtures/coingecko-trending.json';
 
 const bySymbol = <T extends { symbol: string }>(rows: T[], symbol: string) => {
@@ -53,10 +56,28 @@ describe('OKX', () => {
     expect(doge.turnover24h).toBeLessThan(5e8);
   });
 
-  it('reads USDT turnover from candles', () => {
+  it('reads open, close and USDT turnover from 15-minute candles', () => {
     const bars = parseOkxCandles(okxCandles);
-    expect(bars).toHaveLength(3);
-    expect(bars[1]).toEqual({ t: 1794722400000, turnover: 345229678.07008 });
+    expect(bars).toHaveLength(4);
+    expect(bars[1]).toEqual({ t: 1794741300000, open: 65285, close: 65419.3, turnover: 34780781.88219, takerBuy: null });
+  });
+
+  it('stamps open interest with the period close and drops the period in progress', () => {
+    // Captured at 11:31:55 UTC: the 11:30 row is still in progress.
+    const now = 1794742315000;
+    const points = parseOkxOi(okxOi, now);
+    expect(points).toHaveLength(5);
+    // The 11:15 row holds the open interest, in coins, as of 11:30.
+    expect(points[0]).toEqual({ t: 1794742200000, oi: 32722.8934000001291 });
+    expect(points.every((p) => p.t <= now)).toBe(true);
+  });
+
+  it('reads taker sell then buy turnover, matching the candle', () => {
+    const points = parseOkxTaker(okxTaker);
+    const p = points.find((x) => x.t === 1794741300000);
+    expect(p).toEqual({ t: 1794741300000, sell: 18510972.69791000057, buy: 16269809.18428000063 });
+    // Buy + sell is the same bar's USDT turnover from the candle feed.
+    expect((p!.buy + p!.sell) / 34780781.88219).toBeCloseTo(1, 4);
   });
 
   it('fails loudly on an error payload', () => {
@@ -91,7 +112,7 @@ describe('Pionex', () => {
     const bars = parsePionexKlines(pionexKlines);
     expect(bars).toHaveLength(3);
     const typical = (64615.1 + 64143.5 + 64430.0) / 3;
-    expect(bars[1].t).toBe(1794722400000);
+    expect(bars[1]).toMatchObject({ t: 1794722400000, open: 64481.3, close: 64430.0, takerBuy: null });
     expect(bars[1].turnover).toBeCloseTo(2840.5244 * typical, 3);
   });
 
@@ -120,9 +141,21 @@ describe('Binance', () => {
     expect(bySymbol(tickers, '1000PEPEUSDT').base).toBe('1000PEPE');
   });
 
-  it('reads quote volume from klines', () => {
+  it('reads quote volume and the taker-buy split from klines', () => {
     const bars = parseBinanceKlines(binanceKlines);
-    expect(bars[1]).toEqual({ t: 1794722400000, turnover: 987200455.9 });
+    expect(bars[1]).toEqual({
+      t: 1794722400000,
+      open: 64478.7,
+      close: 64425.3,
+      turnover: 987200455.9,
+      takerBuy: 476100000.3,
+    });
+  });
+
+  it('reads open interest in coins at each snapshot time', () => {
+    const points = parseBinanceOi(binanceOi);
+    expect(points).toHaveLength(3);
+    expect(points[2]).toEqual({ t: 1794741300000, oi: 82224.201 });
   });
 
   it('fails loudly on the region-block payload', () => {

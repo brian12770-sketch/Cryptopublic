@@ -1,4 +1,4 @@
-import type { Adapter, HourBar, Ticker } from '../types';
+import type { Adapter, Bar, Ticker } from '../types';
 import { getJson, isRecord, num, shapeError } from '../lib/http';
 
 // Pionex's API sends no CORS headers (verified 2026-11-15), so a browser cannot
@@ -39,20 +39,19 @@ export function parsePionexTickers(json: unknown): Ticker[] {
   return out;
 }
 
-export function parsePionexKlines(json: unknown): HourBar[] {
+export function parsePionexKlines(json: unknown): Bar[] {
   const rows = dataOf(json, 'Pionex K 線').klines;
   if (!Array.isArray(rows)) throw shapeError('Pionex K 線');
-  const out: HourBar[] = [];
+  const out: Bar[] = [];
   for (const r of rows) {
     if (!isRecord(r)) continue;
     const t = num(r.time);
-    const baseVol = num(r.volume);
-    const high = num(r.high);
-    const low = num(r.low);
+    const open = num(r.open);
     const close = num(r.close);
     // Klines carry base volume only; turnover is volume × the bar's typical price.
-    const turnover = baseVol * ((high + low + close) / 3);
-    if (Number.isFinite(t) && Number.isFinite(turnover)) out.push({ t, turnover });
+    const turnover = num(r.volume) * ((num(r.high) + num(r.low) + close) / 3);
+    if (![t, open, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, close, turnover, takerBuy: null });
   }
   return out;
 }
@@ -62,11 +61,14 @@ export const pionex: Adapter = {
   name: 'Pionex',
   pollMs: 5000,
   turnoverNote: '交易所直接提供的 USDT 成交額',
+  concurrency: { bars: 3, stats: 2 },
   async fetchTickers(signal) {
     return parsePionexTickers(await getJson(`${BASE}/market/tickers?type=PERP`, signal));
   },
-  async fetchHourBars(symbol, signal) {
-    const url = `${BASE}/market/klines?symbol=${encodeURIComponent(symbol)}&interval=60M&limit=170`;
+  // Open interest and the taker split are not wired up for Pionex, so those
+  // metrics would read "資料不足" for this exchange.
+  async fetchBars(symbol, signal) {
+    const url = `${BASE}/market/klines?symbol=${encodeURIComponent(symbol)}&interval=15M&limit=300`;
     return parsePionexKlines(await getJson(url, signal));
   },
 };

@@ -1,7 +1,7 @@
 import type { ExchangeData } from '../lib/useExchange';
 import type { TrendingData } from '../lib/trending';
 import { fmtClock, fmtPrice, fmtRatio } from '../lib/format';
-import { heatClass } from '../lib/scale';
+import { rvolClass } from '../lib/scale';
 import { Delta } from './RankTable';
 
 interface Props {
@@ -31,16 +31,16 @@ function ExchangeHeat({ data, symbol }: { data: ExchangeData; symbol: string }) 
   }
   const ticker = data.top.find((t) => sameCoin(t.base, symbol));
   if (!ticker) return null;
-  const state = data.heat[ticker.symbol];
-  if (state?.kind === 'ok') {
+  const cell = data.metrics[ticker.symbol]?.rvol;
+  if (cell?.kind === 'ok') {
     return (
       <span className="chip">
-        <span className={`swatch c-${heatClass(state.heat.ratio)}`} aria-hidden="true" />
-        {name} {fmtRatio(state.heat.ratio)}
+        <span className={`swatch c-${rvolClass(cell.value)}`} aria-hidden="true" />
+        {name} RVOL {fmtRatio(cell.value)}
       </span>
     );
   }
-  const why = state?.kind === 'failed' ? '抓取失敗' : state?.kind === 'insufficient' ? '資料不足' : '計算中';
+  const why = cell?.kind === 'failed' ? '抓取失敗' : cell?.kind === 'insufficient' ? '資料不足' : '計算中';
   return (
     <span className="chip is-off">
       {name} {why}
@@ -72,7 +72,7 @@ export function Trending({ trending, exchanges, now }: Props) {
 
       <p className="meta">
         來源：CoinGecko 過去 24 小時被搜尋最多的幣，每 5 分鐘重抓。這是搜尋熱度，不是 X 或幣安廣場的貼文統計。
-        下方標籤是該幣在各交易所永續合約的量能倍數。
+        下方標籤是該幣在各交易所永續合約的 15 分鐘 RVOL。
       </p>
 
       {(failedOnly || (stale && error)) && (

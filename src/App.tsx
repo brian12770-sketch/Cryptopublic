@@ -14,6 +14,13 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'trending', label: '熱搜' },
 ];
 
+const MODES: { id: Mode; label: string }[] = [
+  { id: 'rvol', label: 'RVOL' },
+  { id: 'oi', label: 'OI' },
+  { id: 'taker', label: '買賣比' },
+  { id: 'change', label: '漲跌' },
+];
+
 /** At this width all panels sit side by side and the tabs disappear. */
 const WIDE = '(min-width: 1180px)';
 
@@ -55,7 +62,7 @@ function useWide(): boolean {
 }
 
 export function App() {
-  const [mode, setMode] = useState<Mode>(() => stored('mode', ['heat', 'change'] as const, 'heat'));
+  const [mode, setMode] = useState<Mode>(() => stored('mode', ['rvol', 'oi', 'taker', 'change'] as const, 'rvol'));
   const [upColor, setUpColor] = useState<UpColor>(() => stored('upColor', ['green', 'red'] as const, 'green'));
   const [tab, setTab] = useState<Tab>(() => stored('tab', ['binance', 'okx', 'trending'] as const, 'binance'));
   const wide = useWide();
@@ -80,12 +87,11 @@ export function App() {
         <h1>永續合約熱度</h1>
         <div className="controls">
           <div className="seg" role="group" aria-label="熱力圖顏色代表">
-            <button type="button" aria-pressed={mode === 'heat'} onClick={() => setMode('heat')}>
-              量能異常
-            </button>
-            <button type="button" aria-pressed={mode === 'change'} onClick={() => setMode('change')}>
-              漲跌幅
-            </button>
+            {MODES.map((m) => (
+              <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => setMode(m.id)}>
+                {m.label}
+              </button>
+            ))}
           </div>
           <div className="seg" role="group" aria-label="漲跌顏色">
             <button type="button" aria-pressed={upColor === 'green'} onClick={() => setUpColor('green')}>
@@ -108,7 +114,7 @@ export function App() {
         </nav>
       )}
 
-      <main className={wide ? `grid is-wide cols-${exchanges.length}` : 'grid'}>
+      <main className={wide ? 'grid is-wide' : 'grid'}>
         {exchanges.map(
           (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} />,
         )}
@@ -116,7 +122,7 @@ export function App() {
       </main>
 
       <footer className="foot">
-        行情每 5 秒向交易所重抓一次，不是逐筆即時；下單前請以交易所畫面為準。本頁只讀公開行情，不連任何帳戶。
+        價格與成交額每 5 秒向交易所重抓一次，不是逐筆即時；15m、RVOL、OI、買賣比每 15 分鐘隨 K 棒收盤更新。下單前請以交易所畫面為準。本頁只讀公開行情，不連任何帳戶。
       </footer>
     </div>
   );

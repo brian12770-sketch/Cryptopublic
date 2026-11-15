@@ -2,12 +2,12 @@ import { useMemo, useRef, useState } from 'react';
 import type { Mode } from '../types';
 import type { ExchangeData } from '../lib/useExchange';
 import { linkOf } from '../lib/useExchange';
-import { HOUR_MS } from '../lib/heat';
-import { fmtClock, fmtHourMinute, fmtPct, fmtPrice, fmtRatio, fmtTurnover } from '../lib/format';
-import { tileClass, tileValue } from '../lib/scale';
+import { BAR_MS } from '../lib/metrics';
+import { fmtClock, fmtHourMinute, fmtPct, fmtPrice, fmtTurnover } from '../lib/format';
+import { modeCell, tileClass, tileValue } from '../lib/scale';
 import { Treemap, type Tile } from './Treemap';
 import { Legend } from './Legend';
-import { Delta, HeatCell, RankTable } from './RankTable';
+import { Delta, DeltaCell, OiCell, RankTable, RvolCell, TakerCell } from './RankTable';
 
 interface Props {
   data: ExchangeData;
@@ -22,11 +22,13 @@ const STATUS = {
   down: { icon: '✕', label: '中斷' },
 } as const;
 
+const MODE_NAME: Record<Mode, string> = { rvol: 'RVOL', oi: 'OI 變化', taker: '買賣比', change: '漲跌' };
+
 /** Re-run the treemap layout at most this often, so tiles hold still between ticks. */
 const RELAYOUT_MS = 60_000;
 
 export function ExchangePanel({ data, mode, now }: Props) {
-  const { adapter, top, heat, lastOk, error, listed, heatBarTime } = data;
+  const { adapter, top, metrics, lastOk, error, listed, barTime } = data;
   const link = linkOf(data, now);
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -51,37 +53,52 @@ export function ExchangePanel({ data, mode, now }: Props) {
   const tiles: Tile[] = useMemo(
     () =>
       top.map((t) => {
-        const state = heat[t.symbol];
-        const ratio = state?.kind === 'ok' ? `，量能 ${fmtRatio(state.heat.ratio)}` : '';
+        const m = metrics[t.symbol];
+        const value = tileValue(mode, t, m);
+        const extra = mode === 'change' ? '' : `，${MODE_NAME[mode]} ${value}`;
         return {
           key: t.symbol,
           label: t.base,
-          value: tileValue(mode, t, state),
-          cls: tileClass(mode, t, state),
+          value,
+          cls: tileClass(mode, t, m),
           size: sizes.get(t.symbol) ?? t.turnover24h,
-          description: `${t.base}，價格 ${fmtPrice(t.price)}，24 小時 ${fmtPct(t.changePct)}，成交額 ${fmtTurnover(t.turnover24h)} USDT${ratio}`,
+          description: `${t.base}，價格 ${fmtPrice(t.price)}，24 小時 ${fmtPct(t.changePct)}，成交額 ${fmtTurnover(t.turnover24h)} USDT${extra}`,
         };
       }),
-    [top, heat, mode, sizes],
+    [top, metrics, mode, sizes],
   );
 
   const active = activeKey ? top.find((t) => t.symbol === activeKey) : undefined;
+  const activeMetrics = active ? metrics[active.symbol] : undefined;
 
+  // How many contracts have a value for the metric the map is coloured by.
   const counts = useMemo(() => {
     let ok = 0;
     let failed = 0;
     let thin = 0;
     for (const t of top) {
-      const s = heat[t.symbol];
-      if (s?.kind === 'ok') ok++;
-      else if (s?.kind === 'failed') failed++;
-      else if (s?.kind === 'insufficient') thin++;
+      const cell = modeCell(mode === 'change' ? 'rvol' : mode, metrics[t.symbol]);
+      if (cell?.kind === 'ok') ok++;
+      else if (cell?.kind === 'failed') failed++;
+      else if (cell?.kind === 'insufficient') thin++;
     }
     return { ok, failed, thin };
-  }, [top, heat]);
+  }, [top, metrics, mode]);
+
+  // Open-interest snapshots can trail the candle by one bar; say so when they do.
+  const oiLag = useMemo(() => {
+    if (barTime === null) return false;
+    return top.some((t) => {
+      const at = metrics[t.symbol]?.oiTime;
+      return at !== null && at !== undefined && at < barTime + BAR_MS;
+    });
+  }, [top, metrics, barTime]);
 
   const status = STATUS[link];
   const hasData = top.length > 0;
+  const barLabel =
+    barTime !== null ? `${fmtHourMinute(barTime)}–${fmtHourMinute(barTime + BAR_MS)}` : '最近一根';
+  const toggle = (key: string) => setSelected((cur) => (cur === key ? null : key));
 
   return (
     <section className={`panel link-${link}`} aria-label={`${adapter.name} USDT 永續合約`}>
@@ -107,26 +124,34 @@ export function ExchangePanel({ data, mode, now }: Props) {
 
       {hasData ? (
         <div className={link === 'down' || link === 'stale' ? 'body is-dim' : 'body'}>
-          <Treemap
-            tiles={tiles}
-            layoutKey={layoutKey}
-            activeKey={activeKey}
-            onHover={setHovered}
-            onSelect={(key) => setSelected((cur) => (cur === key ? null : key))}
-          />
+          <Treemap tiles={tiles} layoutKey={layoutKey} activeKey={activeKey} onHover={setHovered} onSelect={toggle} />
 
           <div className="readout" aria-live="off">
             {active ? (
               <>
                 <strong>{active.base}</strong>
                 <span>{fmtPrice(active.price)}</span>
-                <Delta pct={active.changePct} />
+                <span>
+                  24h <Delta pct={active.changePct} />
+                </span>
+                <span>
+                  15m <DeltaCell cell={activeMetrics?.ret15} />
+                </span>
                 <span>
                   成交額 {active.turnoverApprox ? '≈' : ''}
                   {fmtTurnover(active.turnover24h)}
                 </span>
                 <span>
-                  量能 <HeatCell state={heat[active.symbol]} />
+                  RVOL <RvolCell cell={activeMetrics?.rvol} />
+                </span>
+                <span>
+                  OI 15m <OiCell cell={activeMetrics?.oi15} />
+                </span>
+                <span>
+                  OI 1h <OiCell cell={activeMetrics?.oi1h} />
+                </span>
+                <span>
+                  買賣比 <TakerCell cell={activeMetrics?.taker} />
                 </span>
               </>
             ) : (
@@ -136,25 +161,29 @@ export function ExchangePanel({ data, mode, now }: Props) {
 
           <Legend mode={mode} />
 
-          <p className="meta">
-            成交額前 {top.length} 名，共 {listed} 檔 USDT 永續合約。成交額為{adapter.turnoverNote}。
-            <br />
-            量能倍數＝
-            {heatBarTime !== null
-              ? `${fmtHourMinute(heatBarTime)}–${fmtHourMinute(heatBarTime + HOUR_MS)} 這一小時`
-              : '最近一個完整小時'}
-            的成交額 ÷ 前 7 天每小時成交額的中位數。已算出 {counts.ok}/{top.length} 檔
-            {counts.thin > 0 && `，${counts.thin} 檔資料不足`}
-            {counts.failed > 0 && `，${counts.failed} 檔抓取失敗`}。
-          </p>
+          <details className="meta">
+            <summary>
+              15m、RVOL、OI、買賣比都是 {barLabel} 這根 15 分鐘 K 棒的數字。
+              {mode !== 'change' && (
+                <>
+                  {' '}
+                  {MODE_NAME[mode]} 已算出 {counts.ok}/{top.length} 檔
+                  {counts.thin > 0 && `，${counts.thin} 檔資料不足`}
+                  {counts.failed > 0 && `，${counts.failed} 檔抓取失敗`}。
+                </>
+              )}
+              {oiLag && ' 部分 OI 是前一根的快照，交易所還沒公布最新一筆。'}
+            </summary>
+            <ul>
+              <li>範圍：成交額前 {top.length} 名，共 {listed} 檔 USDT 永續合約。成交額為{adapter.turnoverNote}。</li>
+              <li>15m：這根 K 棒從開盤到收盤的漲跌。</li>
+              <li>RVOL：這根 K 棒的成交額 ÷ 前 3 天所有 15 分鐘 K 棒成交額的中位數。</li>
+              <li>OI：未平倉量（幣數）在這根 K 棒期間的變化；明細另有近 1 小時的變化。</li>
+              <li>買賣比：這根 K 棒內主動買入成交額 ÷ 主動賣出成交額，大於 1 代表買方較積極。</li>
+            </ul>
+          </details>
 
-          <RankTable
-            tickers={top}
-            heat={heat}
-            mode={mode}
-            activeKey={activeKey}
-            onSelect={(key) => setSelected((cur) => (cur === key ? null : key))}
-          />
+          <RankTable tickers={top} metrics={metrics} mode={mode} activeKey={activeKey} onSelect={toggle} />
         </div>
       ) : (
         link !== 'down' && <p className="empty">正在向 {adapter.name} 取得行情…</p>
