@@ -21,7 +21,7 @@ export async function proxyPionex(request: Request, parts: string[]): Promise<Re
   let res: Response;
   try {
     res = await fetch(upstream.toString(), {
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/json', 'user-agent': 'perp-heat-dashboard/1.0' },
       cf: { cacheTtl: ttl, cacheEverything: true },
     } as RequestInit);
   } catch {

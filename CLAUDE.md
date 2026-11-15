@@ -36,6 +36,12 @@
 - Pionex `tickers` 的 `amount` 是 USDT 成交額；K 線只有幣數，成交額以幣數 × 該棒代表價估算。
   Pionex 還有以 BTC、ETH 等計價的永續合約與美股代幣合約；只收 `_USDT_PERP` 結尾的。
 - Pionex API 不送 CORS 標頭，瀏覽器不能直接呼叫，所以有 `server/pionexProxy.ts` 這個同源轉接，由 `worker/index.ts` 在 `/api/pionex/*` 執行。
+- **Pionex 會拒絕從 Cloudflare Workers 發出的請求**：線上 Worker 轉接 Pionex 一律得到 HTTP 429，
+  而同一時間從一般主機直接呼叫是 200。回應裡 Pionex 自己的限流額度是滿的（`x-ratelimit-tokens: 30`），
+  加不加 User-Agent 都一樣，所以不是真的超量，而是 Workers 的出口被擋。Pionex 轉接必須放在非 Cloudflare 的主機。
+  目前線上的 Pionex 區塊因此顯示「中斷」。
+- 部署環境的金鑰代理會覆寫 Authorization 標頭，Workers／Pages 的靜態檔上傳（用臨時憑證）會 401。
+  所以網站檔案是內嵌進 Worker 腳本一次上傳的（`scripts/gen-assets.mjs`），不用 wrangler 的 `assets` 設定。
 - OKX 與 CoinGecko 允許瀏覽器跨網域呼叫。
 - **幣安沒有在開發環境實測過**：開發用的雲端主機被幣安地區限制擋下（HTTP 451）。
   幣安的解析程式與測試資料是照官方文件的欄位寫的，要在使用者自己的裝置上確認。
@@ -55,7 +61,9 @@
 
 - `npm run dev` 開發伺服器（Pionex 經 Vite 代理）
 - `npm test` 單元測試
-- `npm run build` 型別檢查＋建置到 `dist/`
+- `npm run build` 建置到 `dist/`、產生 `worker/assets.generated.ts`、型別檢查
 - `npm run deploy` 建置並部署到 Cloudflare Workers（需要 `CLOUDFLARE_API_TOKEN` 與 `CLOUDFLARE_ACCOUNT_ID`）
+
+線上網址：https://perp-heat.crypto-perp-heat.workers.dev
 
 改完資料解析或熱度計算，要跑測試並用真實行情看過畫面才算完成。

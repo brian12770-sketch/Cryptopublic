@@ -30,9 +30,10 @@ npm test
 
 ## 部署（Cloudflare Workers）
 
-Pionex 的 API 不允許瀏覽器直接呼叫，所以網站需要一小段伺服器端轉接。
-這個 repo 用 Cloudflare Workers：`dist/` 裡的靜態檔由平台直接提供，`worker/index.ts` 只處理 `/api/pionex/*`。
-設定在 `wrangler.jsonc`。
+線上網址：https://perp-heat.crypto-perp-heat.workers.dev
+
+整個網站是一支 Cloudflare Worker：`npm run build` 會把 `dist/` 的檔案內嵌進 Worker 腳本，
+`worker/index.ts` 負責回應網頁檔案與 `/api/pionex/*` 轉接。設定在 `wrangler.jsonc`。
 
 需要一把 Cloudflare API 金鑰，權限為帳號層級的 Workers Scripts 編輯，放在環境變數，不要寫進 repo：
 
@@ -40,7 +41,10 @@ Pionex 的 API 不允許瀏覽器直接呼叫，所以網站需要一小段伺�
 CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... npm run deploy
 ```
 
-部署完成後打開網址，確認三個區塊都顯示「更新中」。
+### 已知問題：Pionex 區塊目前連不上
+
+Pionex 會拒絕從 Cloudflare Workers 發出的請求（一律回 HTTP 429），所以線上的 Pionex 區塊顯示「中斷」。
+幣安、OKX、熱搜不受影響。要恢復 Pionex，轉接必須改放在非 Cloudflare 的主機。
 
 ## 資料來源
 
