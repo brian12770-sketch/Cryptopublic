@@ -31,6 +31,24 @@ export interface Features {
 export type Side = 'long' | 'short';
 export type SignalName = 'base' | 'full';
 
+/** Everything about a test that can be chosen. */
+export interface Params {
+  /** Minimum size of the signal bar's move, in percent (long: at least +x, short: at most −x). */
+  retMin: number;
+  /** Minimum relative volume of the signal bar. */
+  rvolMin: number;
+  /** Require taker flow to agree: long needs buy/sell ≥ takerMin, short needs ≤ 1/takerMin. */
+  useTaker: boolean;
+  takerMin: number;
+  /** Require open interest to rise by at least oiMin percent across the signal bar. */
+  useOi: boolean;
+  oiMin: number;
+  /** Holding period in 15-minute bars. */
+  hold: number;
+  /** Round-trip fee, in percent. */
+  feePct: number;
+}
+
 export interface Trade {
   instId: string;
   side: Side;
@@ -44,18 +62,18 @@ export interface Trade {
   net: Record<number, number>;
 }
 
-// ---------- thresholds (pre-registered; do not tune) ----------
+// ---------- the pre-registered tests (backtest/README.md); do not tune these ----------
 
-export const RET_MIN = 0.5; // percent
-export const RVOL_MIN = 2;
-export const TAKER_LONG_MIN = 1.25;
-export const TAKER_SHORT_MAX = 0.8;
-export const OI_MIN = 0.3; // percent
 /** Round-trip taker fee, in percent. */
 export const FEE_PCT = 0.1;
-/** Holding periods in bars; the first is the primary one. */
-export const HOLDS = [4, 1, 16] as const;
 export const PRIMARY_HOLD = 4;
+/** Holding periods reported by the registered tests; the first is the primary one. */
+export const HOLDS = [4, 1, 16] as const;
+
+export const REGISTERED: Record<SignalName, Params> = {
+  base: { retMin: 0.5, rvolMin: 2, useTaker: false, takerMin: 1.25, useOi: false, oiMin: 0.3, hold: PRIMARY_HOLD, feePct: FEE_PCT },
+  full: { retMin: 0.5, rvolMin: 2, useTaker: true, takerMin: 1.25, useOi: true, oiMin: 0.3, hold: PRIMARY_HOLD, feePct: FEE_PCT },
+};
 
 // ---------- features ----------
 
@@ -116,12 +134,13 @@ export function computeFeatures(rows: Row[]): Features[] {
   return out;
 }
 
-/** Whether a bar fires `name` on `side`. A NaN feature never satisfies a condition. */
-export function fires(f: Features, name: SignalName, side: Side): boolean {
-  const base = f.rvol >= RVOL_MIN && (side === 'long' ? f.ret15 >= RET_MIN : f.ret15 <= -RET_MIN);
-  if (!base || name === 'base') return base;
-  const flow = side === 'long' ? f.taker >= TAKER_LONG_MIN : f.taker <= TAKER_SHORT_MAX;
-  return flow && f.oi15 >= OI_MIN;
+/** Whether a bar fires the signal on `side`. A NaN feature never satisfies a condition. */
+export function fires(f: Features, p: Params, side: Side): boolean {
+  if (!(f.rvol >= p.rvolMin)) return false;
+  if (!(side === 'long' ? f.ret15 >= p.retMin : f.ret15 <= -p.retMin)) return false;
+  if (p.useTaker && !(side === 'long' ? f.taker >= p.takerMin : f.taker <= 1 / p.takerMin)) return false;
+  if (p.useOi && !(f.oi15 >= p.oiMin)) return false;
+  return true;
 }
 
 // ---------- trades ----------
@@ -145,39 +164,41 @@ function fundingPaid(rows: Row[], i: number, hold: number): number {
 }
 
 /**
- * Trades for one contract, one signal and one side over signal bars in
- * [from, to). A signal that fires while a trade from an earlier signal is
- * still open (primary holding period) is skipped.
+ * Trades for one contract and one side over signal bars in [from, to). A
+ * signal that fires while a trade from an earlier signal is still open (for
+ * `p.hold` bars) is skipped. Returns are also reported for any extra holding
+ * periods in `holds`.
  */
 export function findTrades(
   instId: string,
   rows: Row[],
   features: Features[],
-  name: SignalName,
+  p: Params,
   side: Side,
   from: number,
   to: number,
+  holds: readonly number[] = [p.hold],
 ): Trade[] {
   const trades: Trade[] = [];
   const sign = side === 'long' ? 1 : -1;
   let busyUntil = -1; // index of the bar at whose open the open trade exits
   for (let i = 0; i < rows.length - 1; i++) {
     const t = rows[i].t;
-    if (t < from || t >= to || !fires(features[i], name, side)) continue;
+    if (t < from || t >= to || !fires(features[i], p, side)) continue;
     const entry = i + 1;
     if (entry < busyUntil) continue;
     // The entry bar must be the very next bar.
     if (rows[entry].t !== t + BAR_MS) continue;
     const gross: Record<number, number> = {};
     const net: Record<number, number> = {};
-    for (const hold of HOLDS) {
+    for (const hold of holds) {
       const raw = forward(rows, entry, hold);
       gross[hold] = sign * raw;
-      net[hold] = sign * raw - FEE_PCT - sign * fundingPaid(rows, entry, hold);
+      net[hold] = sign * raw - p.feePct - sign * fundingPaid(rows, entry, hold);
     }
-    if (!Number.isFinite(gross[PRIMARY_HOLD])) continue;
+    if (!Number.isFinite(gross[p.hold])) continue;
     trades.push({ instId, side, signalTime: t, entryTime: rows[entry].t, gross, net });
-    busyUntil = entry + PRIMARY_HOLD;
+    busyUntil = entry + p.hold;
   }
   return trades;
 }

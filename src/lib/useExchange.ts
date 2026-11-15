@@ -33,6 +33,10 @@ export interface ExchangeData {
   top: Ticker[];
   /** Count of USDT perpetuals the exchange lists. */
   listed: number;
+  /** Every USDT perpetual the exchange lists; empty until it has answered. */
+  symbols: ReadonlySet<string>;
+  /** The 100 contracts with the most 24h turnover right now, best first. */
+  ranked: string[];
   lastOk: number | null;
   error: string | null;
   metrics: Record<string, Metrics>;
@@ -96,6 +100,8 @@ function cellFrom<T>(entry: Entry<T> | undefined, barTime: number, compute: (dat
 export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
   const [top, setTop] = useState<Ticker[]>([]);
   const [listed, setListed] = useState(0);
+  const [symbols, setSymbols] = useState<ReadonlySet<string>>(() => new Set());
+  const [ranked, setRanked] = useState<string[]>([]);
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, Metrics>>({});
@@ -125,6 +131,9 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
         topRef.current = ranked;
         setTop(ranked);
         setListed(all.length);
+        setRanked(topByTurnover(all, 100).map((t) => t.symbol));
+        // Listings change rarely; keep the same Set unless the membership did.
+        setSymbols((prev) => (prev.size === all.length && all.every((t) => prev.has(t.symbol)) ? prev : new Set(all.map((t) => t.symbol))));
         setLastOk(Date.now());
         setError(null);
       } catch (err) {
@@ -261,5 +270,5 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
     };
   }, [adapter]);
 
-  return { adapter, top, listed, lastOk, error, metrics, barTime };
+  return { adapter, top, listed, symbols, ranked, lastOk, error, metrics, barTime };
 }

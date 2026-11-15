@@ -11,6 +11,7 @@ import {
   findTrades,
   HOLDS,
   PRIMARY_HOLD,
+  REGISTERED,
   summarise,
   unconditional,
   type Row,
@@ -119,7 +120,7 @@ const results: { name: SignalName; side: Side; trades: Trade[] }[] = [];
 for (const name of signals) {
   for (const side of sides) {
     const trades: Trade[] = [];
-    for (const [id, rows] of data) trades.push(...findTrades(id, rows, features.get(id)!, name, side, from, to));
+    for (const [id, rows] of data) trades.push(...findTrades(id, rows, features.get(id)!, REGISTERED[name], side, from, to, HOLDS));
     results.push({ name, side, trades });
   }
 }

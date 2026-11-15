@@ -174,3 +174,30 @@ describe('CoinGecko trending', () => {
     expect(coins[1].changePct).toBeCloseTo(-45.92, 2);
   });
 });
+
+describe('candles for the chart', () => {
+  it('reads OHLC and USDT turnover from OKX, oldest first', async () => {
+    const { parseOkxCandleSeries } = await import('../src/lib/candles');
+    const bars = parseOkxCandleSeries(okxCandles);
+    expect(bars.map((b) => b.t)).toEqual([1794739500000, 1794740400000, 1794741300000, 1794742200000]);
+    expect(bars[2]).toEqual({ t: 1794741300000, open: 65285, high: 65525, low: 65277.7, close: 65419.3, turnover: 34780781.88219 });
+  });
+
+  it('reads OHLC and quote volume from Binance klines', async () => {
+    const { parseBinanceCandles } = await import('../src/lib/candles');
+    const bars = parseBinanceCandles(binanceKlines);
+    expect(bars[1]).toEqual({ t: 1794722400000, open: 64478.7, high: 64614, low: 64136.8, close: 64425.3, turnover: 987200455.9 });
+  });
+
+  it('finds the same coin across naming conventions, and reports when an exchange has none', async () => {
+    const { symbolFor } = await import('../src/lib/candles');
+    const binance = new Set(['BTCUSDT', '1000PEPEUSDT']);
+    const okx = new Set(['BTC-USDT-SWAP', 'PEPE-USDT-SWAP', 'NVDA-USDT-SWAP']);
+    expect(symbolFor('binance', 'BTC', binance)).toBe('BTCUSDT');
+    expect(symbolFor('binance', 'PEPE', binance)).toBe('1000PEPEUSDT');
+    expect(symbolFor('okx', '1000PEPE', okx)).toBe('PEPE-USDT-SWAP');
+    expect(symbolFor('binance', 'NVDA', binance)).toBeNull();
+    // An exchange that has not answered yet gets the plain name as a best guess.
+    expect(symbolFor('binance', 'NVDA', new Set())).toBe('NVDAUSDT');
+  });
+});

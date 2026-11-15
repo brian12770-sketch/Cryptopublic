@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { Mode, UpColor } from './types';
 import { ADAPTERS } from './exchanges';
 import { useExchange } from './lib/useExchange';
 import { useTrending } from './lib/trending';
 import { ExchangePanel } from './components/ExchangePanel';
 import { Trending } from './components/Trending';
+
+// The backtest page is loaded only when it is opened.
+const BacktestPage = lazy(() => import('./components/BacktestPage'));
+
+type View = 'board' | 'backtest';
 
 type Tab = 'binance' | 'okx' | 'trending';
 
@@ -65,6 +70,8 @@ export function App() {
   const [mode, setMode] = useState<Mode>(() => stored('mode', ['rvol', 'oi', 'taker', 'change'] as const, 'rvol'));
   const [upColor, setUpColor] = useState<UpColor>(() => stored('upColor', ['green', 'red'] as const, 'green'));
   const [tab, setTab] = useState<Tab>(() => stored('tab', ['binance', 'okx', 'trending'] as const, 'binance'));
+  const [view, setView] = useState<View>('board');
+  const board = view === 'board';
   const wide = useWide();
   const now = useNow(1000);
 
@@ -76,9 +83,10 @@ export function App() {
   useEffect(() => remember('tab', tab), [tab]);
 
   // The hooks run for every exchange; off-screen ones poll slowly to save data.
-  const binance = useExchange(ADAPTERS[0], wide || tab === 'binance');
-  const okx = useExchange(ADAPTERS[1], wide || tab === 'okx');
+  const binance = useExchange(ADAPTERS[0], board && (wide || tab === 'binance'));
+  const okx = useExchange(ADAPTERS[1], board && (wide || tab === 'okx'));
   const exchanges = [binance, okx];
+  const listed = { binance: binance.symbols, okx: okx.symbols };
   const trending = useTrending();
 
   return (
@@ -86,13 +94,23 @@ export function App() {
       <header className="top">
         <h1>永續合約熱度</h1>
         <div className="controls">
-          <div className="seg" role="group" aria-label="熱力圖顏色代表">
-            {MODES.map((m) => (
-              <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => setMode(m.id)}>
-                {m.label}
-              </button>
-            ))}
+          <div className="seg" role="group" aria-label="頁面">
+            <button type="button" aria-pressed={board} onClick={() => setView('board')}>
+              看盤
+            </button>
+            <button type="button" aria-pressed={!board} onClick={() => setView('backtest')}>
+              回測
+            </button>
           </div>
+          {board && (
+            <div className="seg" role="group" aria-label="熱力圖顏色代表">
+              {MODES.map((m) => (
+                <button key={m.id} type="button" aria-pressed={mode === m.id} onClick={() => setMode(m.id)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="seg" role="group" aria-label="漲跌顏色">
             <button type="button" aria-pressed={upColor === 'green'} onClick={() => setUpColor('green')}>
               綠漲紅跌
@@ -104,7 +122,7 @@ export function App() {
         </div>
       </header>
 
-      {!wide && (
+      {board && !wide && (
         <nav className="tabs" aria-label="區塊">
           {TABS.map((t) => (
             <button key={t.id} type="button" aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>
@@ -114,12 +132,20 @@ export function App() {
         </nav>
       )}
 
+      {board ? (
       <main className={wide ? 'grid is-wide' : 'grid'}>
         {exchanges.map(
-          (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} />,
+          (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} listings={listed} />,
         )}
         {(wide || tab === 'trending') && <Trending trending={trending} exchanges={exchanges} now={now} />}
       </main>
+      ) : (
+        <main>
+          <Suspense fallback={<p className="empty">載入回測頁面…</p>}>
+            <BacktestPage exchanges={exchanges} />
+          </Suspense>
+        </main>
+      )}
 
       <footer className="foot">
         價格與成交額每 5 秒向交易所重抓一次，不是逐筆即時；15m、RVOL、OI、買賣比每 15 分鐘隨 K 棒收盤更新。下單前請以交易所畫面為準。本頁只讀公開行情，不連任何帳戶。

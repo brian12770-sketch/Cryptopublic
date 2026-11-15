@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import type { Mode } from '../types';
+import type { CandleSource } from '../lib/candles';
 import type { ExchangeData } from '../lib/useExchange';
 import { linkOf } from '../lib/useExchange';
 import { BAR_MS } from '../lib/metrics';
@@ -9,10 +10,15 @@ import { Treemap, type Tile } from './Treemap';
 import { Legend } from './Legend';
 import { Delta, DeltaCell, OiCell, RankTable, RvolCell, TakerCell } from './RankTable';
 
+// The charting library is only needed once a contract is opened.
+const KlineChart = lazy(() => import('./KlineChart'));
+
 interface Props {
   data: ExchangeData;
   mode: Mode;
   now: number;
+  /** Listings per exchange, for finding the selected coin's contract on each. */
+  listings: Record<CandleSource, ReadonlySet<string>>;
 }
 
 const STATUS = {
@@ -27,7 +33,7 @@ const MODE_NAME: Record<Mode, string> = { rvol: 'RVOL', oi: 'OI 變化', taker: 
 /** Re-run the treemap layout at most this often, so tiles hold still between ticks. */
 const RELAYOUT_MS = 60_000;
 
-export function ExchangePanel({ data, mode, now }: Props) {
+export function ExchangePanel({ data, mode, now, listings }: Props) {
   const { adapter, top, metrics, lastOk, error, listed, barTime } = data;
   const link = linkOf(data, now);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -155,9 +161,20 @@ export function ExchangePanel({ data, mode, now }: Props) {
                 </span>
               </>
             ) : (
-              <span className="muted">點方塊或表格列看明細</span>
+              <span className="muted">點方塊或表格列看明細與 K 線</span>
             )}
           </div>
+
+          {selected && top.some((t) => t.symbol === selected) && (
+            <Suspense fallback={<p className="kline-foot muted">載入圖表…</p>}>
+              <KlineChart
+                key={selected}
+                base={top.find((t) => t.symbol === selected)!.base}
+                listed={listings}
+                onClose={() => setSelected(null)}
+              />
+            </Suspense>
+          )}
 
           <Legend mode={mode} />
 
