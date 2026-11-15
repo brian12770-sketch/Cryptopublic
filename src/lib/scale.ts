@@ -1,5 +1,6 @@
-import type { Cell, Metrics, Mode, Ticker } from '../types';
+import type { Cell, Horizon, Metrics, Mode, Ticker } from '../types';
 import { fmtPct, fmtRatio, fmtTaker } from './format';
+import { excessOver } from './metrics';
 
 /** Class boundaries for 24h price change, in percent. Seven classes, neutral in the middle. */
 export const CHANGE_STEPS = [-6, -3, -1, 1, 3, 6] as const;
@@ -20,6 +21,16 @@ export const OI_CLASSES = ['oiDn3', 'oiDn2', 'oiDn1', 'flat', 'oiUp1', 'oiUp2', 
 export const TAKER_STEPS = [0.67, 0.8, 0.95, 1.05, 1.25, 1.5] as const;
 export const TAKER_CLASSES = CHANGE_CLASSES;
 
+/**
+ * Class boundaries for return in excess of BTC, in percentage points. Wider
+ * for longer windows, since a day's dispersion is far larger than an hour's.
+ */
+export const RS_STEPS: Record<Horizon, readonly number[]> = {
+  '1h': [-3, -1.5, -0.5, 0.5, 1.5, 3],
+  '4h': [-6, -3, -1, 1, 3, 6],
+  '24h': [-10, -5, -2, 2, 5, 10],
+};
+
 export const NO_DATA_CLASS = 'nodata';
 
 function bucket(value: number, steps: readonly number[]): number {
@@ -32,26 +43,45 @@ export const changeClass = (pct: number): string => CHANGE_CLASSES[bucket(pct, C
 export const rvolClass = (ratio: number): string => RVOL_CLASSES[bucket(ratio, RVOL_STEPS)];
 export const oiClass = (pct: number): string => OI_CLASSES[bucket(pct, OI_STEPS)];
 export const takerClass = (ratio: number): string => TAKER_CLASSES[bucket(ratio, TAKER_STEPS)];
+export const rsClass = (excess: number, horizon: Horizon): string => CHANGE_CLASSES[bucket(excess, RS_STEPS[horizon])];
+
+/** What the relative-strength mode needs beyond one contract's own metrics. */
+export interface Strength {
+  horizon: Horizon;
+  /** BTC's metrics on the same exchange: the benchmark. */
+  btc: Metrics | undefined;
+}
 
 /** The cell a heatmap mode reads; undefined for the mode that needs no metrics. */
-export function modeCell(mode: Mode, m: Metrics | undefined): Cell | undefined {
+export function modeCell(mode: Mode, m: Metrics | undefined, horizon: Horizon): Cell | undefined {
   if (mode === 'rvol') return m?.rvol;
   if (mode === 'oi') return m?.oi15;
   if (mode === 'taker') return m?.taker;
+  if (mode === 'rs') return m?.lookback[horizon];
   return undefined;
 }
 
-export function tileClass(mode: Mode, ticker: Ticker, m: Metrics | undefined): string {
+export function tileClass(mode: Mode, ticker: Ticker, m: Metrics | undefined, strength: Strength): string {
   if (mode === 'change') return changeClass(ticker.changePct);
-  const cell = modeCell(mode, m);
+  if (mode === 'rs') {
+    const excess = excessOver(m?.lookback[strength.horizon], strength.btc?.lookback[strength.horizon]);
+    return excess === undefined ? NO_DATA_CLASS : rsClass(excess, strength.horizon);
+  }
+  const cell = modeCell(mode, m, strength.horizon);
   if (cell?.kind !== 'ok') return NO_DATA_CLASS;
   if (mode === 'rvol') return rvolClass(cell.value);
   return mode === 'oi' ? oiClass(cell.value) : takerClass(cell.value);
 }
 
-export function tileValue(mode: Mode, ticker: Ticker, m: Metrics | undefined): string {
+export function tileValue(mode: Mode, ticker: Ticker, m: Metrics | undefined, strength: Strength): string {
   if (mode === 'change') return fmtPct(ticker.changePct);
-  const cell = modeCell(mode, m);
+  if (mode === 'rs') {
+    // BTC measured against itself is the yardstick, not a result.
+    if (m !== undefined && m === strength.btc) return '基準';
+    const excess = excessOver(m?.lookback[strength.horizon], strength.btc?.lookback[strength.horizon]);
+    return excess === undefined ? '—' : fmtPct(excess);
+  }
+  const cell = modeCell(mode, m, strength.horizon);
   if (cell?.kind !== 'ok') return '—';
   if (mode === 'rvol') return fmtRatio(cell.value);
   return mode === 'oi' ? fmtPct(cell.value) : fmtTaker(cell.value);
@@ -62,7 +92,7 @@ export interface LegendStop {
   label: string;
 }
 
-export const LEGENDS: Record<Mode, { title: string; stops: LegendStop[] }> = {
+const LEGENDS: Record<Exclude<Mode, 'rs'>, { title: string; stops: LegendStop[] }> = {
   rvol: {
     title: '15 分鐘 RVOL',
     stops: [
@@ -111,3 +141,22 @@ export const LEGENDS: Record<Mode, { title: string; stops: LegendStop[] }> = {
     ],
   },
 };
+
+const signed = (v: number) => `${v > 0 ? '+' : '−'}${Math.abs(v)}%`;
+
+export function legendFor(mode: Mode, horizon: Horizon): { title: string; stops: LegendStop[] } {
+  if (mode !== 'rs') return LEGENDS[mode];
+  const [a, b, c, d, e, f] = RS_STEPS[horizon];
+  return {
+    title: `${horizon} 漲幅超過 BTC`,
+    stops: [
+      { cls: 'loss3', label: `≤ ${signed(a)}` },
+      { cls: 'loss2', label: signed(b) },
+      { cls: 'loss1', label: signed(c) },
+      { cls: 'flat', label: '相近' },
+      { cls: 'gain1', label: signed(d) },
+      { cls: 'gain2', label: signed(e) },
+      { cls: 'gain3', label: `≥ ${signed(f)}` },
+    ],
+  };
+}

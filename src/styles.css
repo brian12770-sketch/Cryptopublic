@@ -966,3 +966,32 @@ progress {
 .reveal .alert {
   margin: 0;
 }
+
+/* Position in the relative-strength ranking. */
+.rank-pos {
+  display: inline-block;
+  min-width: 20px;
+  margin-right: 4px;
+  color: var(--ink-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Five columns have to fit a phone in the relative-strength table. */
+@media (max-width: 480px) {
+  .rank.is-strength th,
+  .rank.is-strength td {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  .rank.is-strength .delta-mark {
+    display: none;
+  }
+  .rank.is-strength .rank-pos {
+    min-width: 15px;
+    margin-right: 2px;
+  }
+  .rank.is-strength .swatch {
+    margin-right: 3px;
+  }
+}

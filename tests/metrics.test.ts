@@ -197,3 +197,49 @@ describe('formatting', () => {
     expect(fmtTaker(1.5)).toBe('1.50');
   });
 });
+
+describe('relative strength', () => {
+  it('measures close to close across the look-back, ending at the target bar', async () => {
+    const { computeLookback, HORIZON_BARS } = await import('../src/lib/metrics');
+    // Closes rise by 1 each bar: 100 at bar 0, 196 at bar 96.
+    const series: Bar[] = Array.from({ length: 98 }, (_, i) => ({ t: T + i * BAR_MS, open: 99 + i, close: 100 + i, turnover: 1, takerBuy: null }));
+    const at = T + 96 * BAR_MS;
+    const value = (span: number) => {
+      const cell = computeLookback(series, at, span);
+      return cell.kind === 'ok' ? cell.value : NaN;
+    };
+    expect(value(HORIZON_BARS['1h'])).toBeCloseTo((196 / 192 - 1) * 100, 10);
+    expect(value(HORIZON_BARS['4h'])).toBeCloseTo((196 / 180 - 1) * 100, 10);
+    expect(value(HORIZON_BARS['24h'])).toBeCloseTo((196 / 100 - 1) * 100, 10);
+    // The bar after the target (still forming) must not change the answer.
+    expect(value(4)).toBeCloseTo((196 / 192 - 1) * 100, 10);
+  });
+
+  it('is insufficient when either end of the window is missing', async () => {
+    const { computeLookback } = await import('../src/lib/metrics');
+    const young: Bar[] = Array.from({ length: 10 }, (_, i) => ({ t: T + i * BAR_MS, open: 1, close: 1, turnover: 1, takerBuy: null }));
+    expect(computeLookback(young, T + 9 * BAR_MS, 4)).toEqual({ kind: 'ok', value: 0 });
+    expect(computeLookback(young, T + 9 * BAR_MS, 96)).toEqual(INSUFFICIENT);
+    expect(computeLookback(young, T + 20 * BAR_MS, 4)).toEqual(INSUFFICIENT);
+  });
+
+  it('gives excess over the benchmark only when both are known', async () => {
+    const { excessOver } = await import('../src/lib/metrics');
+    expect(excessOver(ok(3) as never, ok(-1) as never)).toBe(4);
+    expect(excessOver(ok(-2) as never, ok(1.5) as never)).toBe(-3.5);
+    expect(excessOver(ok(3) as never, undefined)).toBeUndefined();
+    expect(excessOver({ kind: 'pending' }, ok(1) as never)).toBeUndefined();
+    expect(excessOver(ok(3) as never, { kind: 'insufficient' })).toBeUndefined();
+  });
+
+  it('uses wider colour classes for longer windows', async () => {
+    const { rsClass, legendFor } = await import('../src/lib/scale');
+    expect(rsClass(2, '1h')).toBe('gain2');
+    expect(rsClass(2, '4h')).toBe('gain1');
+    expect(rsClass(2, '24h')).toBe('gain1');
+    expect(rsClass(1.9, '24h')).toBe('flat');
+    expect(rsClass(-7, '4h')).toBe('loss3');
+    expect(rsClass(-7, '24h')).toBe('loss2');
+    expect(legendFor('rs', '4h').stops.map((s) => s.label)).toEqual(['≤ −6%', '−3%', '−1%', '相近', '+1%', '+3%', '≥ +6%']);
+  });
+});

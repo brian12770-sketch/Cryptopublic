@@ -1,20 +1,30 @@
 import { useMemo, useState } from 'react';
-import type { Cell, Metrics, Mode, Ticker } from '../types';
+import type { Cell, Horizon, Metrics, Mode, Ticker } from '../types';
 import { fmtPct, fmtPrice, fmtRatio, fmtTaker, fmtTurnover } from '../lib/format';
-import { oiClass, rvolClass, takerClass } from '../lib/scale';
+import { excessOver } from '../lib/metrics';
+import { oiClass, rsClass, rvolClass, takerClass } from '../lib/scale';
 
 type SortKey = 'turnover' | 'change' | 'ret15' | 'rvol' | 'oi' | 'taker';
+
+const HORIZONS: Horizon[] = ['1h', '4h', '24h'];
 
 interface Props {
   tickers: Ticker[];
   metrics: Record<string, Metrics>;
   mode: Mode;
+  /** Look-back window the relative-strength view ranks by. */
+  horizon: Horizon;
+  onHorizon(h: Horizon): void;
+  /** BTC's metrics on this exchange, the benchmark; undefined when BTC is not in the list. */
+  btc: Metrics | undefined;
+  btcSymbol: string | undefined;
   activeKey: string | null;
   onSelect(key: string): void;
 }
 
 const COLLAPSED_ROWS = 12;
-const MODE_SORT: Record<Mode, SortKey> = { rvol: 'rvol', oi: 'oi', taker: 'taker', change: 'turnover' };
+// The relative-strength view has its own ranking; its entry here is never read.
+const MODE_SORT: Record<Mode, SortKey> = { rvol: 'rvol', oi: 'oi', taker: 'taker', rs: 'turnover', change: 'turnover' };
 
 /** Rows without a value sort last. */
 const valueOf = (cell: Cell | undefined): number => (cell?.kind === 'ok' ? cell.value : -Infinity);
@@ -77,7 +87,102 @@ export function DeltaCell({ cell }: { cell: Cell | undefined }) {
   return cell?.kind === 'ok' ? <Delta pct={cell.value} /> : <MetricCell cell={cell} format={fmtPct} />;
 }
 
-export function RankTable({ tickers, metrics, mode, activeKey, onSelect }: Props) {
+/** Ranking by price change over one window, with each contract's return in excess of BTC. */
+function StrengthTable({ tickers, metrics, horizon, onHorizon, btc, btcSymbol, activeKey, onSelect }: Props) {
+  // The window whose order the reader flipped; any other window ranks strongest first.
+  const [flipped, setFlipped] = useState<Horizon | null>(null);
+  const ascending = flipped === horizon;
+  const [expanded, setExpanded] = useState(false);
+
+  const rows = useMemo(() => {
+    const sign = ascending ? -1 : 1;
+    return [...tickers].sort((a, b) => {
+      const x = valueOf(metrics[a.symbol]?.lookback[horizon]);
+      const y = valueOf(metrics[b.symbol]?.lookback[horizon]);
+      // Rows without a value stay at the bottom in either direction.
+      if (x === -Infinity || y === -Infinity) return (y === -Infinity ? 0 : 1) - (x === -Infinity ? 0 : 1);
+      return sign * (y - x) || b.turnover24h - a.turnover24h;
+    });
+  }, [tickers, metrics, horizon, ascending]);
+
+  const shown = expanded ? rows : rows.slice(0, COLLAPSED_ROWS);
+  const pick = (h: Horizon) => {
+    // Clicking the active window flips the order, to see the weakest first.
+    setFlipped(h === horizon && !ascending ? h : null);
+    onHorizon(h);
+  };
+
+  return (
+    <div className="rank is-strength">
+      <div className="rank-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" className="sticky">
+                合約
+              </th>
+              {HORIZONS.map((h) => (
+                <th key={h} scope="col" className="num" aria-sort={h !== horizon ? 'none' : ascending ? 'ascending' : 'descending'}>
+                  <button type="button" className={`sort${h === horizon ? ' is-on' : ''}`} onClick={() => pick(h)}>
+                    {h}
+                    <span aria-hidden="true">{h !== horizon ? '' : ascending ? ' ↑' : ' ↓'}</span>
+                  </button>
+                </th>
+              ))}
+              <th scope="col" className="num" title={`${horizon} 漲幅減去 BTC 同期間的漲幅`}>
+                對 BTC
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((t, i) => {
+              const m = metrics[t.symbol];
+              const excess = excessOver(m?.lookback[horizon], btc?.lookback[horizon]);
+              return (
+                <tr key={t.symbol} className={activeKey === t.symbol ? 'is-active' : undefined} onClick={() => onSelect(t.symbol)}>
+                  <th scope="row" className="sticky">
+                    <span className="rank-pos">{i + 1}</span>
+                    {t.base}
+                  </th>
+                  {HORIZONS.map((h) => (
+                    <td key={h} className="num">
+                      <DeltaCell cell={m?.lookback[h]} />
+                    </td>
+                  ))}
+                  <td className="num">
+                    {t.symbol === btcSymbol ? (
+                      <span className="muted">基準</span>
+                    ) : excess === undefined ? (
+                      // Either this contract or BTC has no value for the window.
+                      <span className="muted">—</span>
+                    ) : (
+                      <span className="metric">
+                        <span className={`swatch c-${rsClass(excess, horizon)}`} aria-hidden="true" />
+                        {fmtPct(excess)}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > COLLAPSED_ROWS && (
+        <button type="button" className="more" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? '收合' : `顯示全部 ${rows.length} 檔`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function RankTable(props: Props) {
+  // The two views keep separate state, so they are separate components.
+  return props.mode === 'rs' ? <StrengthTable {...props} /> : <SignalTable {...props} />;
+}
+
+function SignalTable({ tickers, metrics, mode, activeKey, onSelect }: Props) {
   // null = follow the heatmap mode, so the table ranks by what the map colours.
   const [chosen, setChosen] = useState<{ key: SortKey; mode: Mode } | null>(null);
   const [ascending, setAscending] = useState(false);

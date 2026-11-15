@@ -4,7 +4,9 @@ import { FetchError } from './http';
 import {
   BAR_MS,
   barAt,
+  computeLookback,
   computeOiChange,
+  HORIZON_BARS,
   oiAnchor,
   computeReturn,
   computeRvol,
@@ -47,6 +49,11 @@ export interface ExchangeData {
 /** One symbol's copy of one series (candles, open interest or taker volume). */
 interface Entry<T> {
   data: T[] | null;
+  /**
+   * The last closed bar when `data` was fetched, or -1 without data. Bars up
+   * to this one are final in `data`; a later bar in it was still forming.
+   */
+  dataFor: number;
   /** Bar the last request was made for. */
   barTime: number;
   /** Whether `data` already covers that bar. */
@@ -82,17 +89,20 @@ function isDue<T>(entry: Entry<T> | undefined, barTime: number, now: number): bo
 }
 
 /**
- * Turn a cached series into a cell: a failed request reads as failed, a
- * series still catching up to the bar reads as pending, and only a series that
- * has stopped retrying can read as insufficient.
+ * Turn a cached series into a cell describing bar `at`. A failed request
+ * reads as failed; data fetched before `at` closed, or a series still catching
+ * up with the `target` bar, reads as pending; only a series that has stopped
+ * retrying can read as insufficient.
  */
-function cellFrom<T>(entry: Entry<T> | undefined, barTime: number, compute: (data: T[]) => Cell): Cell {
-  if (!entry || entry.barTime !== barTime) return PENDING;
-  if (entry.data === null) return entry.error ? { kind: 'failed', message: entry.error } : PENDING;
+function cellFrom<T>(entry: Entry<T> | undefined, at: number, target: number, compute: (data: T[]) => Cell): Cell {
+  const failed = (message: string): Cell => ({ kind: 'failed', message });
+  if (!entry || entry.data === null) return entry?.error ? failed(entry.error) : PENDING;
+  // Data from before the bar closed holds only a partial copy of it.
+  if (entry.dataFor < at) return entry.error ? failed(entry.error) : PENDING;
   const cell = compute(entry.data);
   if (cell.kind === 'insufficient') {
-    if (entry.error) return { kind: 'failed', message: entry.error };
-    if (!entry.fresh && entry.tries < LAG_TRIES) return PENDING;
+    if (entry.error) return failed(entry.error);
+    if (entry.barTime !== target || (!entry.fresh && entry.tries < LAG_TRIES)) return PENDING;
   }
   return cell;
 }
@@ -182,19 +192,32 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
 
     const publish = () => {
       const bar = target();
-      const close = bar + BAR_MS;
       const next: Record<string, Metrics> = {};
       for (const { symbol } of topRef.current) {
         const b = bars.get(symbol);
+        // Whether the candles on hand include a finished copy of the bar opening at `t`.
+        const has = (t: number) => !!b?.data && b.dataFor >= t && barAt(b.data, t) !== undefined;
+        // Right after a bar closes its candles are still on their way. Keep
+        // describing the previous bar until they arrive, rather than going blank.
+        // A failed request is not "on its way": that case reports the failure.
+        const at = has(bar) ? bar : !b?.error && has(bar - BAR_MS) ? bar - BAR_MS : bar;
+        const close = at + BAR_MS;
+        const oiEntry = oi.get(symbol);
         next[symbol] = {
-          rvol: cellFrom(b, bar, (d) => computeRvol(d, bar)),
-          ret15: cellFrom(b, bar, (d) => computeReturn(d, bar)),
+          barTime: at,
+          rvol: cellFrom(b, at, bar, (d) => computeRvol(d, at)),
+          ret15: cellFrom(b, at, bar, (d) => computeReturn(d, at)),
           taker: adapter.fetchTaker
-            ? cellFrom(taker.get(symbol), bar, (d) => takerFromPoints(d, bar))
-            : cellFrom(b, bar, (d) => takerFromBars(d, bar)),
-          oi15: adapter.fetchOi ? cellFrom(oi.get(symbol), bar, (d) => computeOiChange(d, close, BAR_MS)) : INSUFFICIENT,
-          oi1h: adapter.fetchOi ? cellFrom(oi.get(symbol), bar, (d) => computeOiChange(d, close, HOUR_MS)) : INSUFFICIENT,
-          oiTime: oiAnchor(oi.get(symbol)?.data ?? [], close)?.t ?? null,
+            ? cellFrom(taker.get(symbol), at, bar, (d) => takerFromPoints(d, at))
+            : cellFrom(b, at, bar, (d) => takerFromBars(d, at)),
+          oi15: adapter.fetchOi ? cellFrom(oiEntry, at, bar, (d) => computeOiChange(d, close, BAR_MS)) : INSUFFICIENT,
+          oi1h: adapter.fetchOi ? cellFrom(oiEntry, at, bar, (d) => computeOiChange(d, close, HOUR_MS)) : INSUFFICIENT,
+          oiTime: oiAnchor(oiEntry?.data ?? [], close)?.t ?? null,
+          lookback: {
+            '1h': cellFrom(b, at, bar, (d) => computeLookback(d, at, HORIZON_BARS['1h'])),
+            '4h': cellFrom(b, at, bar, (d) => computeLookback(d, at, HORIZON_BARS['4h'])),
+            '24h': cellFrom(b, at, bar, (d) => computeLookback(d, at, HORIZON_BARS['24h'])),
+          },
         };
       }
       setMetrics(next);
@@ -219,12 +242,13 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
           const tries = previous && previous.barTime === bar ? previous.tries + 1 : 1;
           try {
             const data = await fetcher(symbol, ctrl.signal);
-            series.set(symbol, { data, barTime: bar, fresh: covers(data, bar), tries, fetchedAt: Date.now(), error: null });
+            series.set(symbol, { data, dataFor: bar, barTime: bar, fresh: covers(data, bar), tries, fetchedAt: Date.now(), error: null });
           } catch (err) {
             if (ctrl.signal.aborted) return;
             // Keep the last good data; the metric functions ignore bars that are not the target.
             series.set(symbol, {
               data: previous?.data ?? null,
+              dataFor: previous?.dataFor ?? -1,
               barTime: bar,
               fresh: false,
               tries,

@@ -1,8 +1,8 @@
-import type { Mode } from '../types';
-import { LEGENDS } from '../lib/scale';
+import type { Horizon, Mode } from '../types';
+import { legendFor } from '../lib/scale';
 
-export function Legend({ mode }: { mode: Mode }) {
-  const { title, stops } = LEGENDS[mode];
+export function Legend({ mode, horizon }: { mode: Mode; horizon: Horizon }) {
+  const { title, stops } = legendFor(mode, horizon);
   return (
     <div className="legend">
       <span className="legend-title">{title}</span>

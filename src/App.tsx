@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import type { Mode, UpColor } from './types';
+import type { Horizon, Mode, UpColor } from './types';
 import { ADAPTERS } from './exchanges';
 import { useExchange } from './lib/useExchange';
 import { useTrending } from './lib/trending';
@@ -23,6 +23,7 @@ const MODES: { id: Mode; label: string }[] = [
   { id: 'rvol', label: 'RVOL' },
   { id: 'oi', label: 'OI' },
   { id: 'taker', label: '買賣比' },
+  { id: 'rs', label: '強弱' },
   { id: 'change', label: '漲跌' },
 ];
 
@@ -67,9 +68,10 @@ function useWide(): boolean {
 }
 
 export function App() {
-  const [mode, setMode] = useState<Mode>(() => stored('mode', ['rvol', 'oi', 'taker', 'change'] as const, 'rvol'));
+  const [mode, setMode] = useState<Mode>(() => stored('mode', ['rvol', 'oi', 'taker', 'rs', 'change'] as const, 'rvol'));
   const [upColor, setUpColor] = useState<UpColor>(() => stored('upColor', ['green', 'red'] as const, 'green'));
   const [tab, setTab] = useState<Tab>(() => stored('tab', ['binance', 'okx', 'trending'] as const, 'binance'));
+  const [horizon, setHorizon] = useState<Horizon>(() => stored('horizon', ['1h', '4h', '24h'] as const, '4h'));
   const [view, setView] = useState<View>('board');
   const board = view === 'board';
   const wide = useWide();
@@ -81,6 +83,7 @@ export function App() {
   }, [upColor]);
   useEffect(() => remember('mode', mode), [mode]);
   useEffect(() => remember('tab', tab), [tab]);
+  useEffect(() => remember('horizon', horizon), [horizon]);
 
   // The hooks run for every exchange; off-screen ones poll slowly to save data.
   const binance = useExchange(ADAPTERS[0], board && (wide || tab === 'binance'));
@@ -111,6 +114,15 @@ export function App() {
               ))}
             </div>
           )}
+          {board && mode === 'rs' && (
+            <div className="seg" role="group" aria-label="強弱排名的週期">
+              {(['1h', '4h', '24h'] as const).map((h) => (
+                <button key={h} type="button" aria-pressed={horizon === h} onClick={() => setHorizon(h)}>
+                  {h}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="seg" role="group" aria-label="漲跌顏色">
             <button type="button" aria-pressed={upColor === 'green'} onClick={() => setUpColor('green')}>
               綠漲紅跌
@@ -135,7 +147,7 @@ export function App() {
       {board ? (
       <main className={wide ? 'grid is-wide' : 'grid'}>
         {exchanges.map(
-          (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} listings={listed} />,
+          (ex) => (wide || tab === ex.adapter.id) && <ExchangePanel key={ex.adapter.id} data={ex} mode={mode} now={now} horizon={horizon} onHorizon={setHorizon} listings={listed} />,
         )}
         {(wide || tab === 'trending') && <Trending trending={trending} exchanges={exchanges} now={now} />}
       </main>

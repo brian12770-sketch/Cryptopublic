@@ -70,6 +70,8 @@ export type Cell =
 
 /** Everything derived for one contract from its last closed 15-minute bar. */
 export interface Metrics {
+  /** Open time of the bar these figures describe; one bar behind while the newest is still loading. */
+  barTime: number;
   /** Relative volume: the bar's turnover over the median of the prior 3 days of bars. */
   rvol: Cell;
   /** The bar's own price change, open to close, in percent. */
@@ -82,7 +84,12 @@ export interface Metrics {
   oi1h: Cell;
   /** Time of the open-interest snapshot the two changes end at; it can trail the bar by 15 minutes. */
   oiTime: number | null;
+  /** Price change over each look-back window ending at the bar's close, in percent. */
+  lookback: Record<Horizon, Cell>;
 }
 
-export type Mode = 'rvol' | 'oi' | 'taker' | 'change';
+/** Look-back windows for the relative-strength ranking. */
+export type Horizon = '1h' | '4h' | '24h';
+
+export type Mode = 'rvol' | 'oi' | 'taker' | 'rs' | 'change';
 export type UpColor = 'green' | 'red';

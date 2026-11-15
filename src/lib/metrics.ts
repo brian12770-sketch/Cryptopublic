@@ -1,4 +1,4 @@
-import type { Bar, Cell, OiPoint, TakerPoint, Ticker } from '../types';
+import type { Bar, Cell, Horizon, OiPoint, TakerPoint, Ticker } from '../types';
 
 export const BAR_MS = 15 * 60 * 1000;
 /** RVOL baseline: the 3 days of bars before the bar being measured. */
@@ -6,6 +6,8 @@ export const BASELINE_BARS = 288;
 /** Fewer baseline bars than this (12 hours) and RVOL is not shown. */
 export const MIN_BASELINE = 48;
 export const TOP_N = 50;
+/** Length of each relative-strength look-back, in 15-minute bars. */
+export const HORIZON_BARS: Record<Horizon, number> = { '1h': 4, '4h': 16, '24h': 96 };
 
 const OK = (value: number): Cell => ({ kind: 'ok', value });
 const INSUFFICIENT: Cell = { kind: 'insufficient' };
@@ -50,6 +52,24 @@ export function computeRvol(bars: Bar[], barTime: number): Cell {
 export function computeReturn(bars: Bar[], barTime: number): Cell {
   const bar = barAt(bars, barTime);
   return bar && bar.open > 0 ? OK((bar.close / bar.open - 1) * 100) : INSUFFICIENT;
+}
+
+/**
+ * Price change in percent from the close `bars` 15-minute bars earlier to the
+ * close of the bar at `barTime`. Both closes must be in the feed.
+ */
+export function computeLookback(bars: Bar[], barTime: number, span: number): Cell {
+  const end = barAt(bars, barTime);
+  const start = barAt(bars, barTime - span * BAR_MS);
+  return end && start && start.close > 0 ? OK((end.close / start.close - 1) * 100) : INSUFFICIENT;
+}
+
+/**
+ * Return in excess of the benchmark's over the same window, in percentage
+ * points. Undefined unless both are known: a missing benchmark is not zero.
+ */
+export function excessOver(cell: Cell | undefined, benchmark: Cell | undefined): number | undefined {
+  return cell?.kind === 'ok' && benchmark?.kind === 'ok' ? cell.value - benchmark.value : undefined;
 }
 
 /** Taker buy turnover over taker sell turnover, from a buy/sell pair. */
