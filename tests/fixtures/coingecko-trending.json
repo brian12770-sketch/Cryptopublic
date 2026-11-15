@@ -1,0 +1,82 @@
+{
+ "coins": [
+  {
+   "item": {
+    "id": "bitcoin",
+    "coin_id": 1,
+    "name": "Bitcoin",
+    "symbol": "BTC",
+    "market_cap_rank": 1,
+    "thumb": "https://coin-images.coingecko.com/coins/images/1/standard/bitcoin.png?1696501400",
+    "small": "https://coin-images.coingecko.com/coins/images/1/small/bitcoin.png?1696501400",
+    "large": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png?1696501400",
+    "slug": "bitcoin",
+    "price_btc": 1.0008188206301014,
+    "score": 0,
+    "data": {
+     "price": 64451.954189107986,
+     "price_btc": "1.000818820630101",
+     "price_change_percentage_24h": {
+      "usd": -4.2973124099063185
+     },
+     "market_cap": "$1,296,160,935,915",
+     "market_cap_btc": "20126378.96402802",
+     "total_volume": "$51,614,475,694",
+     "total_volume_btc": "801476.6400877569"
+    }
+   }
+  },
+  {
+   "item": {
+    "id": "kava",
+    "coin_id": 9761,
+    "name": "Kava",
+    "symbol": "KAVA",
+    "market_cap_rank": 472,
+    "thumb": "https://coin-images.coingecko.com/coins/images/9761/standard/kava.png?1696509822",
+    "small": "https://coin-images.coingecko.com/coins/images/9761/small/kava.png?1696509822",
+    "large": "https://coin-images.coingecko.com/coins/images/9761/large/kava.png?1696509822",
+    "slug": "kava",
+    "price_btc": 5.673051723424559e-07,
+    "score": 1,
+    "data": {
+     "price": 0.03646867119177807,
+     "price_btc": "0.0000005673051723424559",
+     "price_change_percentage_24h": {
+      "usd": -45.92002293448179
+     },
+     "market_cap": "$39,508,850",
+     "market_cap_btc": "614.5946856903282",
+     "total_volume": "$67,828,090",
+     "total_volume_btc": "1055.063800502154"
+    }
+   }
+  },
+  {
+   "item": {
+    "id": "solana",
+    "coin_id": 4128,
+    "name": "Solana",
+    "symbol": "SOL",
+    "market_cap_rank": 7,
+    "thumb": "https://coin-images.coingecko.com/coins/images/4128/standard/solana.png?1718769756",
+    "small": "https://coin-images.coingecko.com/coins/images/4128/small/solana.png?1718769756",
+    "large": "https://coin-images.coingecko.com/coins/images/4128/large/solana.png?1718769756",
+    "slug": "solana",
+    "price_btc": 0.0010939080286980966,
+    "score": 2,
+    "data": {
+     "price": 70.46612532138963,
+     "price_btc": "0.001093908028698096",
+     "price_change_percentage_24h": {
+      "usd": -6.887983298148464
+     },
+     "market_cap": "$41,689,170,649",
+     "market_cap_btc": "647158.8765261997",
+     "total_volume": "$5,043,427,306",
+     "total_volume_btc": "78293.58139853804"
+    }
+   }
+  }
+ ]
+}
