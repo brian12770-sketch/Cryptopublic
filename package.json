@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "node scripts/gen-assets.mjs && tsc --noEmit",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "backtest": "esbuild backtest/run.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/backtest.mjs && node node_modules/.cache/backtest.mjs"
   },
   "dependencies": {
     "d3-hierarchy": "^3.1.3",
@@ -22,6 +23,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
+    "esbuild": "^0.28.2",
     "https-proxy-agent": "^9.1.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",

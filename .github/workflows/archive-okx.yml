@@ -1,0 +1,52 @@
+name: Archive OKX 15-minute data
+
+# OKX keeps 15-minute open interest and taker volume for about two weeks.
+# This saves each completed UTC day to the `data` branch so the backtest
+# sample keeps growing. Public market data only; no credentials are used.
+
+on:
+  schedule:
+    - cron: '20 1 * * *' # 01:20 UTC, after the previous day's last bar is published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: archive-okx
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check out the data branch
+        run: |
+          if git ls-remote --exit-code --heads origin data > /dev/null; then
+            git fetch --depth=1 origin data
+            git worktree add -B data data-branch origin/data
+          else
+            git worktree add --orphan -b data data-branch
+          fi
+
+      - name: Download the days that are not archived yet
+        run: node backtest/fetch-okx.mjs --archive data-branch/okx --top 80
+
+      - name: Commit new days
+        working-directory: data-branch
+        run: |
+          git add okx
+          if git diff --cached --quiet; then
+            echo "Nothing new to archive."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Archive OKX 15-minute data through $(ls okx | tail -1 | cut -c1-10)"
+          git push origin data
