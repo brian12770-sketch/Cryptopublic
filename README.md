@@ -28,14 +28,19 @@ npm run dev
 npm test
 ```
 
-## 部署（Cloudflare Pages）
+## 部署（Cloudflare Workers）
 
-Pionex 的 API 不允許瀏覽器直接呼叫，所以需要一個能跑小段伺服器程式的託管平台。
-GitHub Pages 做不到；Cloudflare Pages 的免費方案可以，repo 裡的 `functions/` 資料夾會自動變成轉接。
+Pionex 的 API 不允許瀏覽器直接呼叫，所以網站需要一小段伺服器端轉接。
+這個 repo 用 Cloudflare Workers：`dist/` 裡的靜態檔由平台直接提供，`worker/index.ts` 只處理 `/api/pionex/*`。
+設定在 `wrangler.jsonc`。
 
-1. 到 Cloudflare 後台 → Workers & Pages → 建立 → Pages → 連結這個 GitHub repo。
-2. 建置指令填 `npm run build`，輸出目錄填 `dist`。
-3. 部署完成後打開網址，確認三個區塊都顯示「更新中」。
+需要一把 Cloudflare API 金鑰，權限為帳號層級的 Workers Scripts 編輯，放在環境變數，不要寫進 repo：
+
+```bash
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... npm run deploy
+```
+
+部署完成後打開網址，確認三個區塊都顯示「更新中」。
 
 ## 資料來源
 
@@ -43,5 +48,5 @@ GitHub Pages 做不到；Cloudflare Pages 的免費方案可以，repo 裡的 `f
 |---|---|---|
 | 幣安 | `fapi.binance.com` 公開行情 | 交易所提供的 USDT 成交額 |
 | OKX | `www.okx.com` 公開行情 | 幣數 × 24 小時代表價，近似值 |
-| Pionex | `api.pionex.com` 公開行情，經同源轉接 | 交易所提供的 USDT 成交額 |
+| Pionex | `api.pionex.com` 公開行情，經 Worker 同源轉接 | 交易所提供的 USDT 成交額 |
 | 熱搜 | CoinGecko `search/trending` | — |

@@ -5,7 +5,7 @@
 
 ## 這個專案是什麼
 
-純前端網站，顯示幣安、OKX、Pionex 三間交易所 USDT 永續合約的報價、成交額熱力圖與量能異常，
+前端網站加一小段 Cloudflare Worker 轉接，顯示幣安、OKX、Pionex 三間交易所 USDT 永續合約的報價、成交額熱力圖與量能異常，
 外加 CoinGecko 熱搜。手機與桌機並重。
 
 - 幣種範圍：每間交易所 24 小時成交額前 50 名的 USDT 永續合約。
@@ -35,7 +35,7 @@
   所以 OKX 的 24 小時成交額是近似值，畫面上以「≈」標示。K 線的 `volCcyQuote`（第 8 欄）才是 USDT。
 - Pionex `tickers` 的 `amount` 是 USDT 成交額；K 線只有幣數，成交額以幣數 × 該棒代表價估算。
   Pionex 還有以 BTC、ETH 等計價的永續合約與美股代幣合約；只收 `_USDT_PERP` 結尾的。
-- Pionex API 不送 CORS 標頭，瀏覽器不能直接呼叫，所以有 `functions/api/pionex` 這個同源轉接。
+- Pionex API 不送 CORS 標頭，瀏覽器不能直接呼叫，所以有 `server/pionexProxy.ts` 這個同源轉接，由 `worker/index.ts` 在 `/api/pionex/*` 執行。
 - OKX 與 CoinGecko 允許瀏覽器跨網域呼叫。
 - **幣安沒有在開發環境實測過**：開發用的雲端主機被幣安地區限制擋下（HTTP 451）。
   幣安的解析程式與測試資料是照官方文件的欄位寫的，要在使用者自己的裝置上確認。
@@ -56,5 +56,6 @@
 - `npm run dev` 開發伺服器（Pionex 經 Vite 代理）
 - `npm test` 單元測試
 - `npm run build` 型別檢查＋建置到 `dist/`
+- `npm run deploy` 建置並部署到 Cloudflare Workers（需要 `CLOUDFLARE_API_TOKEN` 與 `CLOUDFLARE_ACCOUNT_ID`）
 
 改完資料解析或熱度計算，要跑測試並用真實行情看過畫面才算完成。

@@ -3,7 +3,8 @@ import { getJson, isRecord, num, shapeError } from '../lib/http';
 
 // Pionex's API sends no CORS headers (verified 2026-11-15), so a browser cannot
 // call it directly. Requests go through the same-origin proxy in
-// functions/api/pionex, or the Vite dev-server proxy while developing.
+// server/pionexProxy.ts (run by the Worker in worker/), or the Vite dev-server
+// proxy while developing.
 const BASE = import.meta.env?.VITE_PIONEX_BASE ?? '/api/pionex';
 const SUFFIX = '_USDT_PERP';
 

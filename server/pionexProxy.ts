@@ -1,19 +1,13 @@
-// Cloudflare Pages Function: same-origin proxy for Pionex public market data.
+// Same-origin proxy for Pionex public market data.
 // Pionex sends no CORS headers, so the browser cannot call it directly.
-// Read-only by construction: GET only, market endpoints only, no credentials.
+// Read-only by construction: GET only, two market endpoints, no credentials.
 
 const UPSTREAM = 'https://api.pionex.com/api/v1/market/';
 const ALLOWED = new Set(['tickers', 'klines']);
 
-interface Context {
-  request: Request;
-  params: { path?: string | string[] };
-}
-
-export async function onRequest({ request, params }: Context): Promise<Response> {
+/** `parts` is the path after /api/pionex/, split on "/". */
+export async function proxyPionex(request: Request, parts: string[]): Promise<Response> {
   if (request.method !== 'GET') return text(405, 'GET only');
-
-  const parts = Array.isArray(params.path) ? params.path : params.path ? [params.path] : [];
   if (parts.length !== 2 || parts[0] !== 'market' || !ALLOWED.has(parts[1])) {
     return text(404, 'Not proxied');
   }
