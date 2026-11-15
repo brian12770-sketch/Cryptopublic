@@ -78,6 +78,13 @@
 主要判定持有 1 小時、分兩段（15 天測四個訊號一起，12 個月只測漲跌＋RVOL）、並開始每天存檔 OI 與買賣量。
 登記的訊號門檻與判定標準不可事後修改；要改就在該文件新增一節說明。
 
+**第一輪結果（2026-11-15）：六組訊號全部「無效」。** 單根 15 分鐘放量 K 棒進場、持有 1 小時、吃單成交，
+12 個月約 6.4 萬筆交易的平均淨報酬為負，信賴區間整段在零以下，毛報酬也略為負值（放量後平均是回吐不是延續）。
+加上 OI 與買賣比沒有改善。要測新的動能定義，先在 `backtest/README.md` 新增一節登記新假設；
+2025-11 至 2026-10 的 OKX K 線已經看過，不能再當新假設的樣本外資料。
+
+`.github/workflows/archive-okx.yml` 每天把 OKX 的 15 分鐘 OI、買賣量、K 線存到 `data` 分支（OKX 只保留約兩週）。
+
 做回測時遵守：
 
 - 跑之前先寫下假設、預期方向與判定標準；跑完只填結果。
@@ -92,6 +99,7 @@
 - `npm test` 單元測試
 - `npm run build` 建置到 `dist/`、產生 `worker/assets.generated.ts`、型別檢查
 - `npm run deploy` 建置並部署到 Cloudflare Workers（需要 `CLOUDFLARE_API_TOKEN` 與 `CLOUDFLARE_ACCOUNT_ID`）
+- `npm run backtest -- --data <目錄> --from <日期> --to <日期> --signals base,full --title <標題>` 跑回測；資料用 `node backtest/fetch-okx.mjs` 下載
 
 線上網址：https://perp-heat.crypto-perp-heat.workers.dev
 

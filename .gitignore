@@ -4,3 +4,4 @@ dist
 *.local
 .wrangler
 worker/assets.generated.ts
+data/
