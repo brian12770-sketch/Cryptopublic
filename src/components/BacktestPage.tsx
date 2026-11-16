@@ -7,11 +7,11 @@ import {
   unconditional,
   type Params,
   type Side,
-  type Summary,
 } from '../../backtest/engine';
 import { DAY_MS, loadDataset, SOURCES, type Dataset, type DataSource, type Progress } from '../lib/backtestData';
 import type { ExchangeData } from '../lib/useExchange';
 import { FetchError } from '../lib/http';
+import { NumberField, share, Stats, VerdictLine } from './Fields';
 
 interface Props {
   exchanges: ExchangeData[];
@@ -31,8 +31,6 @@ const IN_SAMPLE_SHARE = 0.7;
 /** After this many peeks at the held-back period, its result is no longer much of a test. */
 const REVEAL_WARNING = 3;
 
-const pct = (v: number, digits = 3) => (Number.isFinite(v) ? `${v > 0 ? '+' : ''}${v.toFixed(digits)}%` : '—');
-const share = (v: number) => (Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : '—');
 const ymd = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 function revealKey(d: Dataset): string {
@@ -45,80 +43,6 @@ function readCount(key: string): number {
   } catch {
     return 0;
   }
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  step,
-  min,
-  suffix,
-  disabled,
-}: {
-  label: string;
-  value: number;
-  onChange(v: number): void;
-  step: number;
-  min: number;
-  suffix: string;
-  disabled?: boolean;
-}) {
-  return (
-    <label className={disabled ? 'field is-off' : 'field'}>
-      <span>{label}</span>
-      <span className="field-input">
-        <input
-          type="number"
-          inputMode="decimal"
-          value={value}
-          step={step}
-          min={min}
-          disabled={disabled}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            if (Number.isFinite(v) && v >= min) onChange(v);
-          }}
-        />
-        {suffix}
-      </span>
-    </label>
-  );
-}
-
-function Stats({ s, excess }: { s: Summary; excess: number }) {
-  return (
-    <dl className="stats">
-      <div>
-        <dt>筆數</dt>
-        <dd>{s.n}</dd>
-      </div>
-      <div>
-        <dt>平均淨報酬</dt>
-        <dd>
-          <strong>{pct(s.netMean)}</strong>
-        </dd>
-      </div>
-      <div>
-        <dt>95% 信賴區間</dt>
-        <dd>
-          {pct(s.ci.lo)} 至 {pct(s.ci.hi)}
-        </dd>
-      </div>
-      <div>
-        <dt>勝率</dt>
-        <dd>{share(s.winRate)}</dd>
-      </div>
-      <div>
-        <dt>平均毛報酬</dt>
-        <dd>{pct(s.grossMean)}</dd>
-      </div>
-      <div>
-        <dt>相對任意進場</dt>
-        <dd>{pct(excess)}</dd>
-      </div>
-    </dl>
-  );
 }
 
 export default function BacktestPage({ exchanges }: Props) {
@@ -378,10 +302,7 @@ export default function BacktestPage({ exchanges }: Props) {
                     {showHeld ? (
                       <>
                         <Stats s={held} excess={held.grossMean - sign * baseline.held} />
-                        <p className={`verdict is-${held.verdict === '有效' ? 'pass' : held.verdict === '無效' ? 'fail' : 'none'}`}>
-                          <span aria-hidden="true">{held.verdict === '有效' ? '●' : held.verdict === '無效' ? '✕' : '–'}</span>{' '}
-                          判定：{held.verdict}
-                        </p>
+<VerdictLine verdict={held.verdict} />
                       </>
                     ) : (
                       <p className="muted">尚未揭曉。先在樣本內把參數定下來。</p>

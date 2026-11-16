@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attachExcess,
+  judgeable,
+  universeByTime,
   clusterBootstrap,
   computeFeatures,
   DAY_MS,
@@ -18,6 +21,12 @@ import { BAR_MS, computeRvol } from '../src/lib/metrics';
 import type { Bar } from '../src/types';
 
 const T0 = 1794700800000; // a UTC midnight, on a 15-minute boundary
+
+const nan3 = () => ({ '1h': NaN, '4h': NaN, '24h': NaN });
+/** A feature record with only the per-bar fields set. */
+function feat(over: Partial<Features>): Features {
+  return { ret15: NaN, rvol: NaN, taker: NaN, oi15: NaN, lookback: nan3(), excess: nan3(), turnover24: NaN, ...over };
+}
 
 function row(i: number, over: Partial<Row> = {}): Row {
   return { t: T0 + i * BAR_MS, open: 100, close: 100, turnover: 1000, oi: 5000, takerBuy: 500, takerSell: 500, funding: NaN, ...over };
@@ -60,7 +69,7 @@ describe('computeFeatures', () => {
 });
 
 describe('fires', () => {
-  const f = (over: Partial<Features>): Features => ({ ret15: 0.6, rvol: 2.5, taker: 1.3, oi15: 0.4, ...over });
+  const f = (over: Partial<Features>): Features => feat({ ret15: 0.6, rvol: 2.5, taker: 1.3, oi15: 0.4, ...over });
 
   it('applies the registered thresholds', () => {
     expect(fires(f({}), REGISTERED.base, 'long')).toBe(true);
@@ -87,8 +96,8 @@ describe('fires', () => {
 });
 
 describe('findTrades', () => {
-  const quiet: Features = { ret15: 0, rvol: 1, taker: 1, oi15: 0 };
-  const hot: Features = { ret15: 1, rvol: 3, taker: 1.5, oi15: 0.5 };
+  const quiet: Features = feat({ ret15: 0, rvol: 1, taker: 1, oi15: 0 });
+  const hot: Features = feat({ ret15: 1, rvol: 3, taker: 1.5, oi15: 0.5 });
   const window = [T0, T0 + 100 * BAR_MS] as const;
 
   it('enters at the next open and exits at the open four bars later, net of fees', () => {
@@ -145,7 +154,7 @@ describe('findTrades', () => {
     const rows = Array.from({ length: 30 }, (_, i) => row(i));
     rows[11].open = 200;
     rows[13].open = 204; // two bars after entry
-    const mild: Features = { ret15: 0.3, rvol: 1.6, taker: 1.1, oi15: 0 };
+    const mild: Features = feat({ ret15: 0.3, rvol: 1.6, taker: 1.1, oi15: 0 });
     const features = rows.map((_, i) => (i === 10 ? mild : quiet));
     expect(findTrades('X', rows, features, REGISTERED.base, 'long', ...window)).toHaveLength(0);
     const loose = { ...REGISTERED.base, retMin: 0.2, rvolMin: 1.5, hold: 2, feePct: 0.04 };
@@ -244,5 +253,139 @@ describe('browser data loader parsing', () => {
     const now = Date.UTC(2026, 10, 15, 13, 30);
     expect(testWindow(30, now)).toEqual({ from: Date.UTC(2026, 9, 16), to: Date.UTC(2026, 10, 15) });
     expect(testWindow(30, now).to - testWindow(30, now).from).toBe(30 * day);
+  });
+});
+
+describe('conditions that can be switched off, and strength against BTC', () => {
+  const base = { ...REGISTERED.base };
+
+  it('never fires with every condition off', () => {
+    const none = { ...base, useRet: false, useRvol: false };
+    expect(fires(feat({ ret15: 5, rvol: 9 }), none, 'long')).toBe(false);
+  });
+
+  it('applies only the conditions that are on', () => {
+    const rvolOnly = { ...base, useRet: false };
+    expect(fires(feat({ ret15: NaN, rvol: 2.5 }), rvolOnly, 'long')).toBe(true);
+    expect(fires(feat({ ret15: NaN, rvol: 2.5 }), rvolOnly, 'short')).toBe(true);
+  });
+
+  it('requires beating BTC for longs and trailing it for shorts', () => {
+    const rs = { ...base, useRet: false, useRvol: false, useRs: true, rsHorizon: '4h' as const, rsMin: 2 };
+    const ahead = feat({ excess: { '1h': 0, '4h': 2.5, '24h': 0 } });
+    const behind = feat({ excess: { '1h': 0, '4h': -2.5, '24h': 0 } });
+    expect(fires(ahead, rs, 'long')).toBe(true);
+    expect(fires(ahead, rs, 'short')).toBe(false);
+    expect(fires(behind, rs, 'short')).toBe(true);
+    expect(fires(feat({}), rs, 'long')).toBe(false);
+  });
+
+  it('tells an unjudgeable bar apart from one with no signal', () => {
+    const p = { ...base, useOi: true };
+    expect(judgeable(feat({ ret15: 0, rvol: 1, oi15: 0 }), p)).toBe(true);
+    expect(judgeable(feat({ ret15: 0, rvol: 1 }), p)).toBe(false);
+  });
+
+  it('computes look-backs, the trailing day and the excess over BTC', () => {
+    const coin = Array.from({ length: 120 }, (_, i) => row(i, { close: 100 + i, turnover: 10 }));
+    const btc = Array.from({ length: 120 }, (_, i) => row(i, { close: 1000 + i, turnover: 50 }));
+    const rows = new Map([
+      ['COIN', coin],
+      ['BTC', btc],
+    ]);
+    const features = new Map([...rows].map(([id, r]) => [id, computeFeatures(r)]));
+    expect(attachExcess(features, rows, 'BTC')).toBe(true);
+    const f = features.get('COIN')![110];
+    expect(f.lookback['1h']).toBeCloseTo((210 / 206 - 1) * 100, 10);
+    expect(f.lookback['24h']).toBeCloseTo((210 / 114 - 1) * 100, 10);
+    const btc1h = (1110 / 1106 - 1) * 100;
+    expect(f.excess['1h']).toBeCloseTo((210 / 206 - 1) * 100 - btc1h, 10);
+    expect(features.get('BTC')![110].excess['4h']).toBeCloseTo(0, 10);
+    // A full day of bars is needed for the trailing turnover and the 24h look-back.
+    expect(f.turnover24).toBe(960);
+    expect(features.get('COIN')![94].turnover24).toBeNaN();
+    expect(features.get('COIN')![95].lookback['24h']).toBeNaN();
+  });
+
+  it('ranks the point-in-time top N by trailing 24h turnover', () => {
+    const mk = (turnover: number) => Array.from({ length: 100 }, (_, i) => row(i, { turnover }));
+    const rows = new Map([
+      ['A', mk(5)],
+      ['B', mk(50)],
+      ['C', mk(20)],
+    ]);
+    const features = new Map([...rows].map(([id, r]) => [id, computeFeatures(r)]));
+    const top = universeByTime(features, rows, 2);
+    expect([...top.get(T0 + 99 * BAR_MS)!].sort()).toEqual(['B', 'C']);
+    // Before a full day exists nobody is ranked.
+    expect(top.has(T0 + 50 * BAR_MS)).toBe(false);
+  });
+
+  it('only trades bars the allow filter lets through', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => row(i));
+    const hot = feat({ ret15: 1, rvol: 3 });
+    const quiet = feat({ ret15: 0, rvol: 1 });
+    const features = rows.map((_, i) => (i === 10 || i === 20 ? hot : quiet));
+    const allowed = findTrades('X', rows, features, base, 'long', T0, T0 + 100 * BAR_MS, [4], (t) => t !== rows[10].t);
+    expect(allowed.map((t) => t.signalTime)).toEqual([rows[20].t]);
+  });
+});
+
+describe('screener and tracker definitions', () => {
+  it('judges live metrics with the engine rules and explains what it could not judge', async () => {
+    const { runScreen, DEFAULT_SCREEN } = await import('../src/lib/screen');
+    const ok = (value: number) => ({ kind: 'ok' as const, value });
+    const lb = (h4: number) => ({ '1h': ok(0), '4h': ok(h4), '24h': ok(0) });
+    const metrics = (over: object) => ({
+      barTime: 0,
+      rvol: ok(2.5),
+      ret15: ok(0.8),
+      taker: ok(1.3),
+      oi15: ok(0.4),
+      oi1h: ok(0),
+      oiTime: null,
+      lookback: lb(3),
+      ...over,
+    });
+    const tick = (base: string) => ({ symbol: `${base}USDT`, base, price: 1, changePct: 0, turnover24h: 1, turnoverApprox: false });
+    const top = [tick('BTC'), tick('AAA'), tick('BBB'), tick('CCC'), tick('DDD')];
+    const result = runScreen(DEFAULT_SCREEN, top, {
+      BTCUSDT: metrics({ lookback: lb(1) }), // excess 0 against itself: no match
+      AAAUSDT: metrics({}), // +0.8%, RVOL 2.5, 4h +3 vs BTC +1: long
+      BBBUSDT: metrics({ ret15: ok(-0.9), lookback: lb(-2) }), // short
+      CCCUSDT: metrics({ rvol: { kind: 'pending' } }),
+      DDDUSDT: metrics({ lookback: { '1h': ok(0), '4h': { kind: 'insufficient' }, '24h': ok(0) } }),
+    } as never);
+    expect(result.matches.map((m) => `${m.ticker.base} ${m.side}`)).toEqual(['AAA long', 'BBB short']);
+    expect(result.judged).toBe(3);
+    expect(result.pending).toBe(1);
+    expect(result.missing).toBe(1);
+  });
+
+  it('accepts a well-formed tracker and explains what is wrong with a bad one', async () => {
+    const { parseTrackerDef } = await import('../src/lib/tracker');
+    const { DEFAULT_SCREEN } = await import('../src/lib/screen');
+    const good = { name: ' 強勢 ', side: 'long', holdBars: 4, feePct: 0.1, conditions: DEFAULT_SCREEN.conditions };
+    const parsed = parseTrackerDef(good);
+    expect(typeof parsed).toBe('object');
+    expect(parsed).toMatchObject({ name: '強勢', side: 'long', holdBars: 4 });
+    expect(parseTrackerDef({ ...good, holdBars: 3 })).toMatch(/holdBars/);
+    expect(parseTrackerDef({ ...good, side: 'up' })).toMatch(/side/);
+    expect(parseTrackerDef({ ...good, conditions: { ...good.conditions, takerMin: 0.8 } })).toMatch(/conditions/);
+    const off = Object.fromEntries(Object.entries(good.conditions).map(([k, v]) => [k, k.startsWith('use') ? false : v]));
+    expect(parseTrackerDef({ ...good, conditions: off })).toMatch(/至少/);
+  });
+
+  it('builds a GitHub new-file link that carries the file name and content', async () => {
+    const { githubNewFileUrl, trackerFileName, trackerJson } = await import('../src/lib/tracker');
+    const { DEFAULT_SCREEN } = await import('../src/lib/screen');
+    const def = { name: '測試', side: 'both' as const, holdBars: 4, feePct: 0.1, conditions: DEFAULT_SCREEN.conditions };
+    const name = trackerFileName(new Date(Date.UTC(2026, 10, 16, 9, 5)));
+    expect(name).toBe('20261116-0905.json');
+    const url = new URL(githubNewFileUrl(def, name));
+    expect(url.pathname).toBe('/brian12770-sketch/Cryptopublic/new/claude/sleepy-mendel-cga24x');
+    expect(url.searchParams.get('filename')).toBe('trackers/20261116-0905.json');
+    expect(JSON.parse(url.searchParams.get('value')!)).toEqual(def);
+    expect(trackerJson(def).endsWith('\n')).toBe(true);
   });
 });

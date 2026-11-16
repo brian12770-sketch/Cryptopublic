@@ -2,7 +2,12 @@
 // The definitions follow backtest/README.md; the metrics match src/lib/metrics.ts
 // (tests/backtest.test.ts checks the RVOL here against the site's own function).
 
-import { BAR_MS, BASELINE_BARS, MIN_BASELINE } from '../src/lib/metrics';
+import type { Horizon } from '../src/types';
+import { BAR_MS, BASELINE_BARS, HORIZON_BARS, MIN_BASELINE } from '../src/lib/metrics';
+
+export const HORIZONS: Horizon[] = ['1h', '4h', '24h'];
+/** Bars in the trailing turnover used to rank contracts, matching the site's 24h turnover. */
+const DAY_BARS = 96;
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -26,16 +31,29 @@ export interface Features {
   rvol: number;
   taker: number;
   oi15: number;
+  /** Close-to-close change over each look-back, in percent. */
+  lookback: Record<Horizon, number>;
+  /** Look-back change minus BTC's over the same window, in percentage points; filled by attachExcess. */
+  excess: Record<Horizon, number>;
+  /** USDT traded in the 24 hours ending at this bar's close; NaN without a full day of bars. */
+  turnover24: number;
 }
+
+const nanByHorizon = (): Record<Horizon, number> => ({ '1h': NaN, '4h': NaN, '24h': NaN });
 
 export type Side = 'long' | 'short';
 export type SignalName = 'base' | 'full';
 
-/** Everything about a test that can be chosen. */
+/**
+ * Everything about a signal that can be chosen. Each condition can be switched
+ * off; with every condition off, nothing fires.
+ */
 export interface Params {
-  /** Minimum size of the signal bar's move, in percent (long: at least +x, short: at most −x). */
+  /** Require the signal bar to move by at least retMin percent (long: up, short: down). */
+  useRet: boolean;
   retMin: number;
-  /** Minimum relative volume of the signal bar. */
+  /** Require the signal bar's relative volume to be at least rvolMin. */
+  useRvol: boolean;
   rvolMin: number;
   /** Require taker flow to agree: long needs buy/sell ≥ takerMin, short needs ≤ 1/takerMin. */
   useTaker: boolean;
@@ -43,6 +61,10 @@ export interface Params {
   /** Require open interest to rise by at least oiMin percent across the signal bar. */
   useOi: boolean;
   oiMin: number;
+  /** Require the look-back change to beat BTC's by rsMin points (long), or trail it by rsMin (short). */
+  useRs: boolean;
+  rsHorizon: Horizon;
+  rsMin: number;
   /** Holding period in 15-minute bars. */
   hold: number;
   /** Round-trip fee, in percent. */
@@ -70,9 +92,11 @@ export const PRIMARY_HOLD = 4;
 /** Holding periods reported by the registered tests; the first is the primary one. */
 export const HOLDS = [4, 1, 16] as const;
 
+const OFF = { useRs: false, rsHorizon: '4h', rsMin: 0 } as const;
+
 export const REGISTERED: Record<SignalName, Params> = {
-  base: { retMin: 0.5, rvolMin: 2, useTaker: false, takerMin: 1.25, useOi: false, oiMin: 0.3, hold: PRIMARY_HOLD, feePct: FEE_PCT },
-  full: { retMin: 0.5, rvolMin: 2, useTaker: true, takerMin: 1.25, useOi: true, oiMin: 0.3, hold: PRIMARY_HOLD, feePct: FEE_PCT },
+  base: { useRet: true, retMin: 0.5, useRvol: true, rvolMin: 2, useTaker: false, takerMin: 1.25, useOi: false, oiMin: 0.3, ...OFF, hold: PRIMARY_HOLD, feePct: FEE_PCT },
+  full: { useRet: true, retMin: 0.5, useRvol: true, rvolMin: 2, useTaker: true, takerMin: 1.25, useOi: true, oiMin: 0.3, ...OFF, hold: PRIMARY_HOLD, feePct: FEE_PCT },
 };
 
 // ---------- features ----------
@@ -106,6 +130,7 @@ function remove(sorted: number[], v: number) {
 export function computeFeatures(rows: Row[]): Features[] {
   const out: Features[] = [];
   const window: number[] = []; // positive turnovers currently in the baseline, sorted
+  let daySum = 0; // turnover of the last DAY_BARS bars by position
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     // Slide the baseline: bar i-1 enters, bar i-1-BASELINE_BARS leaves.
@@ -124,23 +149,103 @@ export function computeFeatures(rows: Row[]): Features[] {
     // OI change needs the snapshot exactly one bar earlier; a gap in the feed gives no value.
     const oi15 = prev && prev.t === r.t - BAR_MS && prev.oi > 0 && r.oi > 0 ? (r.oi / prev.oi - 1) * 100 : NaN;
 
+    // Look-backs and the trailing day need the bar exactly that far back: a gap gives no value.
+    const back = (bars: number) => {
+      const j = i - bars;
+      return j >= 0 && rows[j].t === r.t - bars * BAR_MS ? rows[j] : undefined;
+    };
+    const lookback = nanByHorizon();
+    for (const h of HORIZONS) {
+      const start = back(HORIZON_BARS[h]);
+      if (start && start.close > 0) lookback[h] = (r.close / start.close - 1) * 100;
+    }
+    daySum += r.turnover;
+    if (i >= DAY_BARS) daySum -= rows[i - DAY_BARS].turnover;
+    const turnover24 = back(DAY_BARS - 1) ? daySum : NaN;
+
     out.push({
       ret15: r.open > 0 ? (r.close / r.open - 1) * 100 : NaN,
       rvol,
       taker: r.takerBuy >= 0 && r.takerSell > 0 ? r.takerBuy / r.takerSell : NaN,
       oi15,
+      lookback,
+      excess: nanByHorizon(),
+      turnover24,
     });
+  }
+  return out;
+}
+
+/**
+ * Fill each contract's excess over the benchmark (normally BTC), bar by bar.
+ * A bar where either side has no look-back keeps NaN.
+ */
+export function attachExcess(features: Map<string, Features[]>, rows: Map<string, Row[]>, benchmarkId: string): boolean {
+  const benchRows = rows.get(benchmarkId);
+  const benchFeatures = features.get(benchmarkId);
+  if (!benchRows || !benchFeatures) return false;
+  const byTime = new Map(benchRows.map((r, i) => [r.t, benchFeatures[i].lookback]));
+  for (const [id, list] of features) {
+    const own = rows.get(id)!;
+    list.forEach((f, i) => {
+      const bench = byTime.get(own[i].t);
+      if (!bench) return;
+      for (const h of HORIZONS) f.excess[h] = f.lookback[h] - bench[h];
+    });
+  }
+  return true;
+}
+
+/**
+ * The contracts that were among the `n` with the most trailing-24h turnover at
+ * each bar, as Map(bar open time -> ids). This is what the site's "top 50"
+ * would have shown at that moment, limited to the contracts in the data.
+ */
+export function universeByTime(features: Map<string, Features[]>, rows: Map<string, Row[]>, n: number): Map<number, Set<string>> {
+  const byTime = new Map<number, { id: string; turnover: number }[]>();
+  for (const [id, list] of features) {
+    const own = rows.get(id)!;
+    list.forEach((f, i) => {
+      if (!Number.isFinite(f.turnover24)) return;
+      const t = own[i].t;
+      if (!byTime.has(t)) byTime.set(t, []);
+      byTime.get(t)!.push({ id, turnover: f.turnover24 });
+    });
+  }
+  const out = new Map<number, Set<string>>();
+  for (const [t, list] of byTime) {
+    list.sort((a, b) => b.turnover - a.turnover);
+    out.set(t, new Set(list.slice(0, n).map((x) => x.id)));
   }
   return out;
 }
 
 /** Whether a bar fires the signal on `side`. A NaN feature never satisfies a condition. */
 export function fires(f: Features, p: Params, side: Side): boolean {
-  if (!(f.rvol >= p.rvolMin)) return false;
-  if (!(side === 'long' ? f.ret15 >= p.retMin : f.ret15 <= -p.retMin)) return false;
+  if (!(p.useRet || p.useRvol || p.useTaker || p.useOi || p.useRs)) return false;
+  if (p.useRvol && !(f.rvol >= p.rvolMin)) return false;
+  if (p.useRet && !(side === 'long' ? f.ret15 >= p.retMin : f.ret15 <= -p.retMin)) return false;
   if (p.useTaker && !(side === 'long' ? f.taker >= p.takerMin : f.taker <= 1 / p.takerMin)) return false;
   if (p.useOi && !(f.oi15 >= p.oiMin)) return false;
+  if (p.useRs) {
+    const x = f.excess[p.rsHorizon];
+    if (!(side === 'long' ? x >= p.rsMin : x <= -p.rsMin)) return false;
+  }
   return true;
+}
+
+/**
+ * Whether a bar can be judged at all: every condition switched on has a value.
+ * A bar that fails this is "unknown", which is not the same as "no signal".
+ */
+export function judgeable(f: Features, p: Params): boolean {
+  return (
+    (!p.useRvol || Number.isFinite(f.rvol)) &&
+    (!p.useRet || Number.isFinite(f.ret15)) &&
+    (!p.useTaker || Number.isFinite(f.taker)) &&
+    (!p.useOi || Number.isFinite(f.oi15)) &&
+    (!p.useRs || Number.isFinite(f.excess[p.rsHorizon]))
+  );
 }
 
 // ---------- trades ----------
@@ -178,13 +283,15 @@ export function findTrades(
   from: number,
   to: number,
   holds: readonly number[] = [p.hold],
+  /** Which signal bars may trade, e.g. only while the contract was in the top 50. */
+  allow: (t: number) => boolean = () => true,
 ): Trade[] {
   const trades: Trade[] = [];
   const sign = side === 'long' ? 1 : -1;
   let busyUntil = -1; // index of the bar at whose open the open trade exits
   for (let i = 0; i < rows.length - 1; i++) {
     const t = rows[i].t;
-    if (t < from || t >= to || !fires(features[i], p, side)) continue;
+    if (t < from || t >= to || !allow(t) || !fires(features[i], p, side)) continue;
     const entry = i + 1;
     if (entry < busyUntil) continue;
     // The entry bar must be the very next bar.

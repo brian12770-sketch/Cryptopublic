@@ -8,8 +8,15 @@ import { Trending } from './components/Trending';
 
 // The backtest page is loaded only when it is opened.
 const BacktestPage = lazy(() => import('./components/BacktestPage'));
+const ScreenerPage = lazy(() => import('./components/ScreenerPage'));
 
-type View = 'board' | 'backtest';
+type View = 'board' | 'screen' | 'backtest';
+
+const VIEWS: { id: View; label: string }[] = [
+  { id: 'board', label: '看盤' },
+  { id: 'screen', label: '篩選' },
+  { id: 'backtest', label: '回測' },
+];
 
 type Tab = 'binance' | 'okx' | 'trending';
 
@@ -86,8 +93,10 @@ export function App() {
   useEffect(() => remember('horizon', horizon), [horizon]);
 
   // The hooks run for every exchange; off-screen ones poll slowly to save data.
-  const binance = useExchange(ADAPTERS[0], board && (wide || tab === 'binance'));
-  const okx = useExchange(ADAPTERS[1], board && (wide || tab === 'okx'));
+  // The screener judges both exchanges at once, so both stay on the fast poll there.
+  const screening = view === 'screen';
+  const binance = useExchange(ADAPTERS[0], screening || (board && (wide || tab === 'binance')));
+  const okx = useExchange(ADAPTERS[1], screening || (board && (wide || tab === 'okx')));
   const exchanges = [binance, okx];
   const listed = { binance: binance.symbols, okx: okx.symbols };
   const trending = useTrending();
@@ -98,12 +107,11 @@ export function App() {
         <h1>永續合約熱度</h1>
         <div className="controls">
           <div className="seg" role="group" aria-label="頁面">
-            <button type="button" aria-pressed={board} onClick={() => setView('board')}>
-              看盤
-            </button>
-            <button type="button" aria-pressed={!board} onClick={() => setView('backtest')}>
-              回測
-            </button>
+            {VIEWS.map((v) => (
+              <button key={v.id} type="button" aria-pressed={view === v.id} onClick={() => setView(v.id)}>
+                {v.label}
+              </button>
+            ))}
           </div>
           {board && (
             <div className="seg" role="group" aria-label="熱力圖顏色代表">
@@ -151,6 +159,12 @@ export function App() {
         )}
         {(wide || tab === 'trending') && <Trending trending={trending} exchanges={exchanges} now={now} />}
       </main>
+      ) : screening ? (
+        <main>
+          <Suspense fallback={<p className="empty">載入篩選頁面…</p>}>
+            <ScreenerPage exchanges={exchanges} now={now} listings={listed} />
+          </Suspense>
+        </main>
       ) : (
         <main>
           <Suspense fallback={<p className="empty">載入回測頁面…</p>}>
