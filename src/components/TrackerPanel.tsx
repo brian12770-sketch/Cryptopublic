@@ -200,7 +200,7 @@ export function TrackerPanel({ screen }: { screen: Screen }) {
       <p className="meta">
         追蹤會把一組固定的條件，套用在設定之後才出現的行情上，記下每一次觸發與之後的實際漲跌。
         因為條件在結果出現之前就定好了，它比回測更能說明這組條件是否真的有用。
-        每天 09:20（台北時間）用前一天的 OKX 存檔資料更新；範圍是每根 K 棒當下成交額前 50 名的合約，只有 OKX。
+        每天用前一天的 OKX 存檔資料更新一次，排定在台北時間 09:20，但 GitHub 的排程常延遲幾個小時；範圍是每根 K 棒當下成交額前 50 名的合約，只有 OKX。
       </p>
 
       {load.kind === 'loading' && <p className="meta">載入追蹤結果…</p>}

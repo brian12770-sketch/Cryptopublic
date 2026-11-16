@@ -4,7 +4,8 @@
 
 - **開始時間就是檔案最後一次提交的時間**，之後才開盤的 15 分鐘 K 棒才會被計入。
 - **提交之後不要修改**：修改會讓追蹤從修改的時間重新開始計算。要換條件，請另外建一個新檔。
-- 每天 01:20 UTC（台北 09:20）由 `.github/workflows/archive-okx.yml` 用前一天的 OKX 存檔資料更新，結果寫在 `data` 分支的 `tracking/results.json`。
+- 每天由 `.github/workflows/archive-okx.yml` 用前一天的 OKX 存檔資料更新，結果寫在 `data` 分支的 `tracking/results.json`。
+  排定在 01:20 UTC（台北 09:20），但 GitHub 的排程常延遲：2026-11-16 那次晚了約 6.5 小時才執行。
 
 格式：
 
