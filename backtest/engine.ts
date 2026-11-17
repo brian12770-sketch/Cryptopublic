@@ -4,6 +4,7 @@
 
 import type { Horizon } from '../src/types';
 import { BAR_MS, BASELINE_BARS, HORIZON_BARS, MIN_BASELINE } from '../src/lib/metrics';
+import { breakoutSeries, DEFAULT_BREAKOUT, type BreakoutBar, type BreakoutSettings, type BreakoutState } from '../src/lib/breakout';
 
 export const HORIZONS: Horizon[] = ['1h', '4h', '24h'];
 /** Bars in the trailing turnover used to rank contracts, matching the site's 24h turnover. */
@@ -15,6 +16,8 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 export interface Row {
   t: number;
   open: number;
+  high: number;
+  low: number;
   close: number;
   turnover: number;
   /** Open interest in coins at the bar's close; NaN when the exchange had none. */
@@ -37,12 +40,16 @@ export interface Features {
   excess: Record<Horizon, number>;
   /** USDT traded in the 24 hours ending at this bar's close; NaN without a full day of bars. */
   turnover24: number;
+  /** Breakout state at this bar's close; null until attachBreakout has run. */
+  breakout: BreakoutBar | null;
 }
 
 const nanByHorizon = (): Record<Horizon, number> => ({ '1h': NaN, '4h': NaN, '24h': NaN });
 
 export type Side = 'long' | 'short';
 export type SignalName = 'base' | 'full';
+/** Breakout states a signal can ask for. */
+export type SignalState = Extract<BreakoutState, 'near' | 'fresh' | 'holding' | 'extended'>;
 
 /**
  * Everything about a signal that can be chosen. Each condition can be switched
@@ -65,6 +72,15 @@ export interface Params {
   useRs: boolean;
   rsHorizon: Horizon;
   rsMin: number;
+  /**
+   * Require a breakout state at the signal bar: above the range for longs,
+   * below it for shorts. rangeBars and extendAtr are the breakout research
+   * parameters (src/lib/breakout.ts); the rest stay at their defaults.
+   */
+  useBreakout: boolean;
+  breakoutState: SignalState;
+  rangeBars: number;
+  extendAtr: number;
   /** Holding period in 15-minute bars. */
   hold: number;
   /** Round-trip fee, in percent. */
@@ -92,7 +108,15 @@ export const PRIMARY_HOLD = 4;
 /** Holding periods reported by the registered tests; the first is the primary one. */
 export const HOLDS = [4, 1, 16] as const;
 
-const OFF = { useRs: false, rsHorizon: '4h', rsMin: 0 } as const;
+const OFF = {
+  useRs: false,
+  rsHorizon: '4h',
+  rsMin: 0,
+  useBreakout: false,
+  breakoutState: 'fresh',
+  rangeBars: DEFAULT_BREAKOUT.rangeBars,
+  extendAtr: DEFAULT_BREAKOUT.extendAtr,
+} as const;
 
 export const REGISTERED: Record<SignalName, Params> = {
   base: { useRet: true, retMin: 0.5, useRvol: true, rvolMin: 2, useTaker: false, takerMin: 1.25, useOi: false, oiMin: 0.3, ...OFF, hold: PRIMARY_HOLD, feePct: FEE_PCT },
@@ -171,9 +195,23 @@ export function computeFeatures(rows: Row[]): Features[] {
       lookback,
       excess: nanByHorizon(),
       turnover24,
+      breakout: null,
     });
   }
   return out;
+}
+
+/** The breakout settings a set of params implies. */
+export function breakoutSettings(p: Pick<Params, 'rangeBars' | 'extendAtr'>): BreakoutSettings {
+  return { ...DEFAULT_BREAKOUT, rangeBars: p.rangeBars, extendAtr: p.extendAtr };
+}
+
+/** Fill one contract's breakout state, bar by bar. Re-run it to change the settings. */
+export function attachBreakout(features: Features[], rows: Row[], settings: BreakoutSettings): void {
+  const series = breakoutSeries(rows, settings);
+  features.forEach((f, i) => {
+    f.breakout = series[i];
+  });
 }
 
 /**
@@ -222,7 +260,7 @@ export function universeByTime(features: Map<string, Features[]>, rows: Map<stri
 
 /** Whether a bar fires the signal on `side`. A NaN feature never satisfies a condition. */
 export function fires(f: Features, p: Params, side: Side): boolean {
-  if (!(p.useRet || p.useRvol || p.useTaker || p.useOi || p.useRs)) return false;
+  if (!(p.useRet || p.useRvol || p.useTaker || p.useOi || p.useRs || p.useBreakout)) return false;
   if (p.useRvol && !(f.rvol >= p.rvolMin)) return false;
   if (p.useRet && !(side === 'long' ? f.ret15 >= p.retMin : f.ret15 <= -p.retMin)) return false;
   if (p.useTaker && !(side === 'long' ? f.taker >= p.takerMin : f.taker <= 1 / p.takerMin)) return false;
@@ -230,6 +268,10 @@ export function fires(f: Features, p: Params, side: Side): boolean {
   if (p.useRs) {
     const x = f.excess[p.rsHorizon];
     if (!(side === 'long' ? x >= p.rsMin : x <= -p.rsMin)) return false;
+  }
+  if (p.useBreakout) {
+    const b = f.breakout?.[side === 'long' ? 'up' : 'down'];
+    if (b?.state !== p.breakoutState) return false;
   }
   return true;
 }
@@ -244,7 +286,8 @@ export function judgeable(f: Features, p: Params): boolean {
     (!p.useRet || Number.isFinite(f.ret15)) &&
     (!p.useTaker || Number.isFinite(f.taker)) &&
     (!p.useOi || Number.isFinite(f.oi15)) &&
-    (!p.useRs || Number.isFinite(f.excess[p.rsHorizon]))
+    (!p.useRs || Number.isFinite(f.excess[p.rsHorizon])) &&
+    (!p.useBreakout || (f.breakout !== null && f.breakout.up.state !== 'unknown'))
   );
 }
 

@@ -37,6 +37,8 @@ export function parseOkxTickers(json: unknown): Ticker[] {
       changePct: ((price - open) / open) * 100,
       turnover24h: baseVol * typical,
       turnoverApprox: true,
+      bid: num(r.bidPx),
+      ask: num(r.askPx),
     });
   }
   if (out.length === 0) throw shapeError('OKX 行情');
@@ -49,11 +51,13 @@ export function parseOkxCandles(json: unknown): Bar[] {
     if (!Array.isArray(row)) continue;
     const t = num(row[0]);
     const open = num(row[1]);
+    const high = num(row[2]);
+    const low = num(row[3]);
     const close = num(row[4]);
     const turnover = num(row[7]); // volCcyQuote, in USDT
-    if (![t, open, close, turnover].every(Number.isFinite)) continue;
+    if (![t, open, high, low, close, turnover].every(Number.isFinite)) continue;
     // OKX candles carry no taker split; it comes from the taker-volume series.
-    out.push({ t, open, close, turnover, takerBuy: null });
+    out.push({ t, open, high, low, close, turnover, takerBuy: null });
   }
   return out;
 }

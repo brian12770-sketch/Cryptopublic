@@ -59,7 +59,7 @@ describe('OKX', () => {
   it('reads open, close and USDT turnover from 15-minute candles', () => {
     const bars = parseOkxCandles(okxCandles);
     expect(bars).toHaveLength(4);
-    expect(bars[1]).toEqual({ t: 1794741300000, open: 65285, close: 65419.3, turnover: 34780781.88219, takerBuy: null });
+    expect(bars[1]).toEqual({ t: 1794741300000, open: 65285, high: 65525, low: 65277.7, close: 65419.3, turnover: 34780781.88219, takerBuy: null });
   });
 
   it('stamps open interest with the period close and drops the period in progress', () => {
@@ -146,6 +146,8 @@ describe('Binance', () => {
     expect(bars[1]).toEqual({
       t: 1794722400000,
       open: 64478.7,
+      high: 64614,
+      low: 64136.8,
       close: 64425.3,
       turnover: 987200455.9,
       takerBuy: 476100000.3,

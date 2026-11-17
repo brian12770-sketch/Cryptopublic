@@ -97,11 +97,13 @@ export function parseBinanceRows(json: unknown): Row[] {
     if (!Array.isArray(r)) continue;
     const t = num(r[0]);
     const open = num(r[1]);
+    const high = num(r[2]);
+    const low = num(r[3]);
     const close = num(r[4]);
     const turnover = num(r[7]);
     const takerBuy = num(r[10]);
-    if (![t, open, close, turnover].every(Number.isFinite)) continue;
-    out.push({ t, open, close, turnover, oi: NaN, takerBuy, takerSell: turnover - takerBuy, funding: NaN });
+    if (![t, open, high, low, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, high, low, close, turnover, oi: NaN, takerBuy, takerSell: turnover - takerBuy, funding: NaN });
   }
   return out;
 }
@@ -212,10 +214,12 @@ export function parseOkxRows(json: unknown): Row[] {
     if (!Array.isArray(r) || r[8] !== '1') continue; // closed candles only
     const t = num(r[0]);
     const open = num(r[1]);
+    const high = num(r[2]);
+    const low = num(r[3]);
     const close = num(r[4]);
     const turnover = num(r[7]);
-    if (![t, open, close, turnover].every(Number.isFinite)) continue;
-    out.push({ t, open, close, turnover, oi: NaN, takerBuy: NaN, takerSell: NaN, funding: NaN });
+    if (![t, open, high, low, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, high, low, close, turnover, oi: NaN, takerBuy: NaN, takerSell: NaN, funding: NaN });
   }
   return out;
 }

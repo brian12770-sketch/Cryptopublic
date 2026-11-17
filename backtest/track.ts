@@ -7,7 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { attachExcess, computeFeatures, DAY_MS, findTrades, universeByTime, type Params } from './engine';
+import { attachBreakout, attachExcess, breakoutSettings, computeFeatures, DAY_MS, findTrades, universeByTime, type Params } from './engine';
 import { loadArchive } from './load';
 import { BAR_MS, TOP_N } from '../src/lib/metrics';
 import { sidesOf } from '../src/lib/screen';
@@ -92,6 +92,11 @@ for (const { result, registeredAt } of pending) {
     continue;
   }
   const params: Params = { ...def.conditions, hold: def.holdBars, feePct: def.feePct };
+  // Breakout state depends on this tracker's own range settings.
+  if (params.useBreakout) {
+    const settings = breakoutSettings(params);
+    for (const [id, list] of rows) attachBreakout(features.get(id)!, list, settings);
+  }
   const trades: TrackedTrade[] = [];
   for (const [id, list] of rows) {
     const allow = (t: number) => universe.get(t)?.has(id) ?? false;

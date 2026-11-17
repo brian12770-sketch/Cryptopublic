@@ -1127,3 +1127,53 @@ pre.json {
   font-size: 12px;
   white-space: pre;
 }
+
+/* ---------- breadth strip and breakout cells ---------- */
+
+.breadth {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 18px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.breadth-title {
+  font-weight: 650;
+}
+
+.breadth-item.is-dim {
+  opacity: 0.45;
+}
+
+.breadth-note {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  white-space: nowrap;
+}
+
+.state .muted,
+.state .warn {
+  font-size: 12px;
+}
+
+.warn {
+  color: var(--ink);
+}
+
+.warn::before {
+  content: '▲ ';
+  color: var(--warning);
+  font-size: 10px;
+}

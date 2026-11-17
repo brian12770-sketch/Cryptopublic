@@ -55,3 +55,15 @@ export function fmtClock(ms: number): string {
 export function fmtHourMinute(ms: number): string {
   return hourMinute.format(ms);
 }
+
+/** Bid-ask spread as a share of the mid price, in percent; NaN when either side is missing. */
+export function spreadPct(bid: number | undefined, ask: number | undefined): number {
+  if (bid === undefined || ask === undefined || !(bid > 0) || !(ask >= bid)) return NaN;
+  return ((ask - bid) / ((ask + bid) / 2)) * 100;
+}
+
+export function fmtSpread(pct: number): string {
+  if (!Number.isFinite(pct)) return '—';
+  return `${pct < 0.1 ? pct.toFixed(3) : pct.toFixed(2)}%`;
+}
+

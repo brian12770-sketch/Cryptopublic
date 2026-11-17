@@ -5,6 +5,7 @@ import { useExchange } from './lib/useExchange';
 import { useTrending } from './lib/trending';
 import { ExchangePanel } from './components/ExchangePanel';
 import { Trending } from './components/Trending';
+import { BreadthBar } from './components/BreadthBar';
 
 // The backtest page is loaded only when it is opened.
 const BacktestPage = lazy(() => import('./components/BacktestPage'));
@@ -141,6 +142,8 @@ export function App() {
           </div>
         </div>
       </header>
+
+      {view !== 'backtest' && <BreadthBar exchanges={exchanges} now={now} />}
 
       {board && !wide && (
         <nav className="tabs" aria-label="區塊">

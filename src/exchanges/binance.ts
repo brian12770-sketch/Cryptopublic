@@ -37,6 +37,19 @@ export function parseBinanceTickers(json: unknown): Ticker[] {
   return out;
 }
 
+/** Best bid and ask per symbol from /fapi/v1/ticker/bookTicker. */
+export function parseBinanceBook(json: unknown): Map<string, { bid: number; ask: number }> {
+  if (!Array.isArray(json)) throw shapeError('幣安買賣價');
+  const out = new Map<string, { bid: number; ask: number }>();
+  for (const r of json) {
+    if (!isRecord(r) || typeof r.symbol !== 'string') continue;
+    const bid = num(r.bidPrice);
+    const ask = num(r.askPrice);
+    if (bid > 0 && ask >= bid) out.set(r.symbol, { bid, ask });
+  }
+  return out;
+}
+
 export function parseBinanceKlines(json: unknown): Bar[] {
   if (!Array.isArray(json)) throw shapeError('幣安 K 線');
   const out: Bar[] = [];
@@ -44,11 +57,13 @@ export function parseBinanceKlines(json: unknown): Bar[] {
     if (!Array.isArray(row)) continue;
     const t = num(row[0]);
     const open = num(row[1]);
+    const high = num(row[2]);
+    const low = num(row[3]);
     const close = num(row[4]);
     const turnover = num(row[7]); // quote asset volume, in USDT
     const takerBuy = num(row[10]); // taker buy quote asset volume, in USDT
-    if (![t, open, close, turnover].every(Number.isFinite)) continue;
-    out.push({ t, open, close, turnover, takerBuy: Number.isFinite(takerBuy) ? takerBuy : null });
+    if (![t, open, high, low, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, high, low, close, turnover, takerBuy: Number.isFinite(takerBuy) ? takerBuy : null });
   }
   return out;
 }
@@ -73,7 +88,15 @@ export const binance: Adapter = {
   turnoverNote: '交易所直接提供的 USDT 成交額',
   concurrency: { bars: 3, stats: 3 },
   async fetchTickers(signal) {
-    return parseBinanceTickers(await getJson(`${BASE}/fapi/v1/ticker/24hr`, signal));
+    // The 24h ticker has no bid and ask; the book ticker does. A failed book
+    // request costs only the spread, so it never fails the tickers.
+    const [tickers, book] = await Promise.all([
+      getJson(`${BASE}/fapi/v1/ticker/24hr`, signal).then(parseBinanceTickers),
+      getJson(`${BASE}/fapi/v1/ticker/bookTicker`, signal)
+        .then(parseBinanceBook)
+        .catch(() => new Map<string, { bid: number; ask: number }>()),
+    ]);
+    return tickers.map((t) => ({ ...t, ...book.get(t.symbol) }));
   },
   async fetchBars(symbol, signal) {
     const url = `${BASE}/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=15m&limit=300`;

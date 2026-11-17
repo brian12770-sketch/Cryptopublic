@@ -20,7 +20,8 @@
     "useRvol": true, "rvolMin": 2,
     "useTaker": false, "takerMin": 1.25,
     "useOi": false, "oiMin": 0.3,
-    "useRs": true, "rsHorizon": "4h", "rsMin": 1
+    "useRs": true, "rsHorizon": "4h", "rsMin": 1,
+    "useBreakout": false, "breakoutState": "fresh", "rangeBars": 20, "extendAtr": 1.5
   }
 }
 ```
@@ -28,4 +29,5 @@
 - `side`：`long`、`short` 或 `both`。
 - `holdBars`：持有幾根 15 分鐘 K 棒，可用 1、2、4、8、16。
 - `feePct`：來回手續費，百分比。
+- `breakoutState`：`near`、`fresh`、`holding`、`extended` 之一（接近突破、剛突破、突破後整理、已延伸），定義見 `src/lib/breakout.ts`。
 - 條件的意義與網站「篩選」頁相同，判斷規則在 `backtest/engine.ts` 的 `fires`。

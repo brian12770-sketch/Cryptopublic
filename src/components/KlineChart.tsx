@@ -5,6 +5,8 @@ import {
   createChart,
   HistogramSeries,
   type IChartApi,
+  type IPriceLine,
+  LineStyle,
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
@@ -26,6 +28,11 @@ interface Props {
   /** Every USDT perpetual each exchange lists; empty while an exchange has not answered. */
   listed: Record<CandleSource, ReadonlySet<string>>;
   onClose(): void;
+  /** Exchange to open on; defaults to Binance. */
+  initialSource?: CandleSource;
+  /** Horizontal lines to draw, valid only on `levelsSource`'s candles. */
+  levels?: { price: number; title: string }[];
+  levelsSource?: CandleSource;
 }
 
 const REFRESH_MS = 20_000;
@@ -55,8 +62,8 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export default function KlineChart({ base, listed, onClose }: Props) {
-  const [wanted, setWanted] = useState<CandleSource>('binance');
+export default function KlineChart({ base, listed, onClose, initialSource = 'binance', levels, levelsSource }: Props) {
+  const [wanted, setWanted] = useState<CandleSource>(initialSource);
   const [interval, setInterval_] = useState<Interval>('15m');
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
 
@@ -118,6 +125,26 @@ export default function KlineChart({ base, listed, onClose }: Props) {
       volume.current = null;
     };
   }, []);
+
+  // Levels come from one exchange's candles; on the other exchange's chart they would mislead.
+  const shownLevels = levels && levelsSource === source ? levels : [];
+  const levelKey = shownLevels.map((l) => `${l.title}:${l.price}`).join('|');
+  useEffect(() => {
+    const series = candles.current;
+    if (!series) return;
+    const lines: IPriceLine[] = shownLevels.map((l) =>
+      series.createPriceLine({
+        price: l.price,
+        title: l.title,
+        color: cssVar('--ink-2'),
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+      }),
+    );
+    return () => lines.forEach((line) => series.removePriceLine(line));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelKey]);
 
   useEffect(() => {
     if (!symbol) return;

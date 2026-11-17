@@ -25,11 +25,11 @@ const T0 = 1794700800000; // a UTC midnight, on a 15-minute boundary
 const nan3 = () => ({ '1h': NaN, '4h': NaN, '24h': NaN });
 /** A feature record with only the per-bar fields set. */
 function feat(over: Partial<Features>): Features {
-  return { ret15: NaN, rvol: NaN, taker: NaN, oi15: NaN, lookback: nan3(), excess: nan3(), turnover24: NaN, ...over };
+  return { ret15: NaN, rvol: NaN, taker: NaN, oi15: NaN, lookback: nan3(), excess: nan3(), turnover24: NaN, breakout: null, ...over };
 }
 
 function row(i: number, over: Partial<Row> = {}): Row {
-  return { t: T0 + i * BAR_MS, open: 100, close: 100, turnover: 1000, oi: 5000, takerBuy: 500, takerSell: 500, funding: NaN, ...over };
+  return { t: T0 + i * BAR_MS, open: 100, high: 100, low: 100, close: 100, turnover: 1000, oi: 5000, takerBuy: 500, takerSell: 500, funding: NaN, ...over };
 }
 
 /** Deterministic pseudo-random turnovers, some of them zero. */
@@ -42,7 +42,7 @@ function noisy(n: number): Row[] {
 describe('computeFeatures', () => {
   it('gives the same RVOL as the function the website uses', () => {
     const rows = noisy(700);
-    const bars: Bar[] = rows.map((r) => ({ t: r.t, open: r.open, close: r.close, turnover: r.turnover, takerBuy: null }));
+    const bars: Bar[] = rows.map((r) => ({ t: r.t, open: r.open, high: r.high, low: r.low, close: r.close, turnover: r.turnover, takerBuy: null }));
     const features = computeFeatures(rows);
     for (const i of [10, 47, 48, 49, 200, 288, 289, 290, 500, 699]) {
       const site = computeRvol(bars, rows[i].t);
@@ -349,13 +349,15 @@ describe('screener and tracker definitions', () => {
     });
     const tick = (base: string) => ({ symbol: `${base}USDT`, base, price: 1, changePct: 0, turnover24h: 1, turnoverApprox: false });
     const top = [tick('BTC'), tick('AAA'), tick('BBB'), tick('CCC'), tick('DDD')];
-    const result = runScreen(DEFAULT_SCREEN, top, {
+    // The momentum conditions without the breakout one, so no candles are needed.
+    const screen = { side: 'both' as const, conditions: { ...DEFAULT_SCREEN.conditions, useRet: true, useBreakout: false } };
+    const result = runScreen(screen, top, {
       BTCUSDT: metrics({ lookback: lb(1) }), // excess 0 against itself: no match
       AAAUSDT: metrics({}), // +0.8%, RVOL 2.5, 4h +3 vs BTC +1: long
       BBBUSDT: metrics({ ret15: ok(-0.9), lookback: lb(-2) }), // short
       CCCUSDT: metrics({ rvol: { kind: 'pending' } }),
       DDDUSDT: metrics({ lookback: { '1h': ok(0), '4h': { kind: 'insufficient' }, '24h': ok(0) } }),
-    } as never);
+    } as never, {});
     expect(result.matches.map((m) => `${m.ticker.base} ${m.side}`)).toEqual(['AAA long', 'BBB short']);
     expect(result.judged).toBe(3);
     expect(result.pending).toBe(1);
@@ -387,5 +389,30 @@ describe('screener and tracker definitions', () => {
     expect(url.searchParams.get('filename')).toBe('trackers/20261116-0905.json');
     expect(JSON.parse(url.searchParams.get('value')!)).toEqual(def);
     expect(trackerJson(def).endsWith('\n')).toBe(true);
+  });
+
+  it('finds a fresh breakout from closed candles and reads the live price against the frozen level', async () => {
+    const { runScreen, breakoutAtBar } = await import('../src/lib/screen');
+    const ok = (value: number) => ({ kind: 'ok' as const, value });
+    // 30 flat bars (99–101), then a breakout bar closing at 102, then the bar still forming.
+    const bars = Array.from({ length: 30 }, (_, i) => ({ t: T0 + i * BAR_MS, open: 100, high: 101, low: 99, close: 100, turnover: 1, takerBuy: null }));
+    bars.push({ t: T0 + 30 * BAR_MS, open: 100, high: 102.5, low: 100, close: 102, turnover: 1, takerBuy: null });
+    bars.push({ t: T0 + 31 * BAR_MS, open: 102, high: 102.2, low: 101.9, close: 102.1, turnover: 1, takerBuy: null });
+    const at = T0 + 30 * BAR_MS;
+    const m = { barTime: at, rvol: ok(3), ret15: ok(2), taker: ok(1), oi15: ok(0), oi1h: ok(0), oiTime: null, lookback: { '1h': ok(0), '4h': ok(0), '24h': ok(0) } };
+    const top = [{ symbol: 'AAAUSDT', base: 'AAA', price: 102.4, changePct: 0, turnover24h: 1, turnoverApprox: false }];
+    const conditions = { ...REGISTERED.base, useRet: false, useRvol: false, useBreakout: true, breakoutState: 'fresh' as const };
+    const breakouts = breakoutAtBar(top, { AAAUSDT: m } as never, { AAAUSDT: bars }, conditions);
+    // The forming bar is left out: the state is that of the bar the metrics describe.
+    expect(breakouts.AAAUSDT?.closed).toHaveLength(31);
+    const result = runScreen({ side: 'both', conditions }, top, { AAAUSDT: m } as never, breakouts);
+    expect(result.matches).toHaveLength(1);
+    const [match] = result.matches;
+    expect(match.side).toBe('long');
+    expect(match.breakout).toMatchObject({ state: 'fresh', level: 101, triggerTime: at });
+    // ATR over the last 14 bars: 13 flat bars of 2 and the breakout bar's 2.5.
+    const atr = (13 * 2 + 2.5) / 14;
+    expect(match.live?.dist).toBeCloseTo((102.4 - 101) / atr, 10);
+    expect(match.live?.slipping).toBe(false);
   });
 });

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  attachBreakout,
+  breakoutSettings,
   computeFeatures,
   findTrades,
   REGISTERED,
   summarise,
   unconditional,
   type Params,
+  type SignalState,
   type Side,
 } from '../../backtest/engine';
 import { DAY_MS, loadDataset, SOURCES, type Dataset, type DataSource, type Progress } from '../lib/backtestData';
@@ -86,10 +89,18 @@ export default function BacktestPage({ exchanges }: Props) {
     }
   };
 
-  const features = useMemo(
+  const baseFeatures = useMemo(
     () => (dataset ? new Map([...dataset.rows].map(([id, rows]) => [id, computeFeatures(rows)])) : null),
     [dataset],
   );
+  // Breakout state depends on the range settings, so it is attached separately.
+  const features = useMemo(() => {
+    if (!dataset || !baseFeatures || !params.useBreakout) return baseFeatures;
+    const settings = breakoutSettings(params);
+    for (const [id, rows] of dataset.rows) attachBreakout(baseFeatures.get(id)!, rows, settings);
+    return new Map(baseFeatures);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, baseFeatures, params.useBreakout, params.rangeBars, params.extendAtr]);
 
   const split = dataset ? dataset.from + Math.round(((dataset.to - dataset.from) / DAY_MS) * IN_SAMPLE_SHARE) * DAY_MS : 0;
 
@@ -241,8 +252,16 @@ export default function BacktestPage({ exchanges }: Props) {
               </button>
             </header>
             <div className="form-row">
-              <NumberField label="15 分鐘漲跌至少" value={params.retMin} step={0.1} min={0} suffix="%" onChange={(v) => set({ retMin: v })} />
-              <NumberField label="RVOL 至少" value={params.rvolMin} step={0.5} min={0} suffix="×" onChange={(v) => set({ rvolMin: v })} />
+              <label className="check">
+                <input type="checkbox" checked={params.useRet} onChange={(e) => set({ useRet: e.target.checked })} />
+                15 分鐘漲跌
+              </label>
+              <NumberField label="15 分鐘漲跌至少" value={params.retMin} step={0.1} min={0} suffix="%" disabled={!params.useRet} onChange={(v) => set({ retMin: v })} />
+              <label className="check">
+                <input type="checkbox" checked={params.useRvol} onChange={(e) => set({ useRvol: e.target.checked })} />
+                RVOL
+              </label>
+              <NumberField label="RVOL 至少" value={params.rvolMin} step={0.5} min={0} suffix="×" disabled={!params.useRvol} onChange={(v) => set({ rvolMin: v })} />
               <label className="field">
                 <span>持有時間</span>
                 <select value={params.hold} onChange={(e) => set({ hold: Number(e.target.value) })}>
@@ -266,6 +285,31 @@ export default function BacktestPage({ exchanges }: Props) {
                 OI 增加確認
               </label>
               <NumberField label="OI 15 分鐘變化至少" value={params.oiMin} step={0.1} min={0} suffix="%" disabled={!params.useOi} onChange={(v) => set({ oiMin: v })} />
+            </div>
+            <div className="form-row">
+              <label className="check">
+                <input type="checkbox" checked={params.useBreakout} onChange={(e) => set({ useBreakout: e.target.checked })} />
+                突破狀態
+              </label>
+              <label className={params.useBreakout ? 'field' : 'field is-off'}>
+                <span>狀態</span>
+                <select value={params.breakoutState} disabled={!params.useBreakout} onChange={(e) => set({ breakoutState: e.target.value as SignalState })}>
+                  <option value="fresh">剛突破／剛跌破</option>
+                  <option value="holding">突破後整理</option>
+                  <option value="extended">已延伸</option>
+                  <option value="near">接近突破／跌破</option>
+                </select>
+              </label>
+              <NumberField
+                label="區間根數"
+                value={params.rangeBars}
+                step={1}
+                min={5}
+                suffix="根"
+                disabled={!params.useBreakout}
+                onChange={(v) => Number.isInteger(v) && v <= 96 && set({ rangeBars: v })}
+              />
+              <NumberField label="延伸門檻" value={params.extendAtr} step={0.25} min={0} suffix="ATR" disabled={!params.useBreakout} onChange={(v) => set({ extendAtr: v })} />
             </div>
             <p className="meta">
               做多：漲幅與買賣比達到門檻；做空：跌幅達到門檻、買賣比低於門檻的倒數

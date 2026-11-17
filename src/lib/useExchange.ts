@@ -39,6 +39,8 @@ export interface ExchangeData {
   symbols: ReadonlySet<string>;
   /** The 100 contracts with the most 24h turnover right now, best first. */
   ranked: string[];
+  /** 15-minute candles per contract, as last fetched; may include the bar still forming. */
+  bars: Record<string, Bar[]>;
   lastOk: number | null;
   error: string | null;
   metrics: Record<string, Metrics>;
@@ -112,6 +114,7 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
   const [listed, setListed] = useState(0);
   const [symbols, setSymbols] = useState<ReadonlySet<string>>(() => new Set());
   const [ranked, setRanked] = useState<string[]>([]);
+  const [barsBySymbol, setBarsBySymbol] = useState<Record<string, Bar[]>>({});
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, Metrics>>({});
@@ -222,6 +225,19 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
       }
       setMetrics(next);
       setBarTime(bar);
+      // Keep the same object while no series has changed, so work keyed on it is not redone.
+      setBarsBySymbol((prev) => {
+        const fresh: Record<string, Bar[]> = {};
+        let changed = false;
+        for (const { symbol } of topRef.current) {
+          const data = bars.get(symbol)?.data;
+          if (!data) continue;
+          fresh[symbol] = data;
+          if (prev[symbol] !== data) changed = true;
+        }
+        if (Object.keys(prev).length !== Object.keys(fresh).length) changed = true;
+        return changed ? fresh : prev;
+      });
     };
 
     async function refresh<T>(
@@ -294,5 +310,5 @@ export function useExchange(adapter: Adapter, visible: boolean): ExchangeData {
     };
   }, [adapter]);
 
-  return { adapter, top, listed, symbols, ranked, lastOk, error, metrics, barTime };
+  return { adapter, top, listed, symbols, ranked, bars: barsBySymbol, lastOk, error, metrics, barTime };
 }

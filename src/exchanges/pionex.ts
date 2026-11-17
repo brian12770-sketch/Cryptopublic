@@ -47,11 +47,13 @@ export function parsePionexKlines(json: unknown): Bar[] {
     if (!isRecord(r)) continue;
     const t = num(r.time);
     const open = num(r.open);
+    const high = num(r.high);
+    const low = num(r.low);
     const close = num(r.close);
     // Klines carry base volume only; turnover is volume × the bar's typical price.
-    const turnover = num(r.volume) * ((num(r.high) + num(r.low) + close) / 3);
-    if (![t, open, close, turnover].every(Number.isFinite)) continue;
-    out.push({ t, open, close, turnover, takerBuy: null });
+    const turnover = num(r.volume) * ((high + low + close) / 3);
+    if (![t, open, high, low, close, turnover].every(Number.isFinite)) continue;
+    out.push({ t, open, high, low, close, turnover, takerBuy: null });
   }
   return out;
 }

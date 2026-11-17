@@ -1,0 +1,23 @@
+{
+  "name": "第二輪 B：已延伸（多空）",
+  "side": "both",
+  "holdBars": 4,
+  "feePct": 0.1,
+  "conditions": {
+    "useRet": false,
+    "retMin": 0.5,
+    "useRvol": false,
+    "rvolMin": 2,
+    "useTaker": false,
+    "takerMin": 1.25,
+    "useOi": false,
+    "oiMin": 0.3,
+    "useRs": false,
+    "rsHorizon": "4h",
+    "rsMin": 1,
+    "useBreakout": true,
+    "breakoutState": "extended",
+    "rangeBars": 20,
+    "extendAtr": 1.5
+  }
+}

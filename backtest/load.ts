@@ -22,6 +22,8 @@ export function loadArchive(dir: string, fromDay = ''): Map<string, Row[]> {
       instId: col('instId'),
       t: col('t'),
       open: col('open'),
+      high: col('high'),
+      low: col('low'),
       close: col('close'),
       turnover: col('turnover'),
       oi: col('oi'),
@@ -34,6 +36,8 @@ export function loadArchive(dir: string, fromDay = ''): Map<string, Row[]> {
       const row: Row = {
         t: Number(f[c.t]),
         open: Number(f[c.open]),
+        high: Number(f[c.high]),
+        low: Number(f[c.low]),
         close: Number(f[c.close]),
         turnover: Number(f[c.turnover]),
         oi: num(f[c.oi]),

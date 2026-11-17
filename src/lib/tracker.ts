@@ -39,7 +39,7 @@ export function parseTrackerDef(raw: unknown): TrackerDef | string {
   const screen = parseScreen({ side: r.side, conditions: r.conditions });
   if (!screen) return 'side 或 conditions 的格式不對';
   const c = screen.conditions;
-  if (!(c.useRet || c.useRvol || c.useTaker || c.useOi || c.useRs)) return '至少要開啟一個條件';
+  if (!(c.useRet || c.useRvol || c.useTaker || c.useOi || c.useRs || c.useBreakout)) return '至少要開啟一個條件';
   return { name: r.name.trim(), side: screen.side, holdBars: r.holdBars as number, feePct: r.feePct, conditions: c };
 }
 

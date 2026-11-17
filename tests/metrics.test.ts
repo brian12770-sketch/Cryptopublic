@@ -24,6 +24,8 @@ function bars(turnovers: number[], last: number): Bar[] {
   return turnovers.map((turnover, i) => ({
     t: last - (turnovers.length - 1 - i) * BAR_MS,
     open: 100,
+    high: 100,
+    low: 100,
     close: 100,
     turnover,
     takerBuy: turnover / 2,
@@ -45,7 +47,7 @@ describe('computeRvol', () => {
 
   it('ignores bars after the target, such as the one in progress', () => {
     const series = bars([...Array(96).fill(100), 300], T);
-    series.push({ t: T + BAR_MS, open: 100, close: 100, turnover: 5, takerBuy: 2 });
+    series.push({ t: T + BAR_MS, open: 100, high: NaN, low: NaN, close: 100, turnover: 5, takerBuy: 2 });
     expect(computeRvol(series, T)).toEqual(ok(3));
   });
 
@@ -74,7 +76,7 @@ describe('computeRvol', () => {
 
 describe('computeReturn', () => {
   it('is the bar open-to-close change in percent', () => {
-    const cell = computeReturn([{ t: T, open: 65285, close: 65419.3, turnover: 1, takerBuy: null }], T);
+    const cell = computeReturn([{ t: T, open: 65285, high: NaN, low: NaN, close: 65419.3, turnover: 1, takerBuy: null }], T);
     expect(cell.kind === 'ok' && cell.value).toBeCloseTo(0.2057, 4);
     expect(computeReturn([], T)).toEqual(INSUFFICIENT);
   });
@@ -82,7 +84,7 @@ describe('computeReturn', () => {
 
 describe('taker ratio', () => {
   it('splits a candle into taker buys and the remainder', () => {
-    const bar: Bar = { t: T, open: 1, close: 1, turnover: 1000, takerBuy: 600 };
+    const bar: Bar = { t: T, open: 1, high: NaN, low: NaN, close: 1, turnover: 1000, takerBuy: 600 };
     expect(takerFromBars([bar], T)).toEqual(ok(1.5));
   });
 
@@ -97,9 +99,9 @@ describe('taker ratio', () => {
   });
 
   it('is insufficient without a split or without any taker selling', () => {
-    expect(takerFromBars([{ t: T, open: 1, close: 1, turnover: 1000, takerBuy: null }], T)).toEqual(INSUFFICIENT);
-    expect(takerFromBars([{ t: T, open: 1, close: 1, turnover: 1000, takerBuy: 1000 }], T)).toEqual(INSUFFICIENT);
-    expect(takerFromBars([{ t: T, open: 1, close: 1, turnover: 0, takerBuy: 0 }], T)).toEqual(INSUFFICIENT);
+    expect(takerFromBars([{ t: T, open: 1, high: NaN, low: NaN, close: 1, turnover: 1000, takerBuy: null }], T)).toEqual(INSUFFICIENT);
+    expect(takerFromBars([{ t: T, open: 1, high: NaN, low: NaN, close: 1, turnover: 1000, takerBuy: 1000 }], T)).toEqual(INSUFFICIENT);
+    expect(takerFromBars([{ t: T, open: 1, high: NaN, low: NaN, close: 1, turnover: 0, takerBuy: 0 }], T)).toEqual(INSUFFICIENT);
   });
 });
 
@@ -202,7 +204,7 @@ describe('relative strength', () => {
   it('measures close to close across the look-back, ending at the target bar', async () => {
     const { computeLookback, HORIZON_BARS } = await import('../src/lib/metrics');
     // Closes rise by 1 each bar: 100 at bar 0, 196 at bar 96.
-    const series: Bar[] = Array.from({ length: 98 }, (_, i) => ({ t: T + i * BAR_MS, open: 99 + i, close: 100 + i, turnover: 1, takerBuy: null }));
+    const series: Bar[] = Array.from({ length: 98 }, (_, i) => ({ t: T + i * BAR_MS, open: 99 + i, high: NaN, low: NaN, close: 100 + i, turnover: 1, takerBuy: null }));
     const at = T + 96 * BAR_MS;
     const value = (span: number) => {
       const cell = computeLookback(series, at, span);
@@ -217,7 +219,7 @@ describe('relative strength', () => {
 
   it('is insufficient when either end of the window is missing', async () => {
     const { computeLookback } = await import('../src/lib/metrics');
-    const young: Bar[] = Array.from({ length: 10 }, (_, i) => ({ t: T + i * BAR_MS, open: 1, close: 1, turnover: 1, takerBuy: null }));
+    const young: Bar[] = Array.from({ length: 10 }, (_, i) => ({ t: T + i * BAR_MS, open: 1, high: NaN, low: NaN, close: 1, turnover: 1, takerBuy: null }));
     expect(computeLookback(young, T + 9 * BAR_MS, 4)).toEqual({ kind: 'ok', value: 0 });
     expect(computeLookback(young, T + 9 * BAR_MS, 96)).toEqual(INSUFFICIENT);
     expect(computeLookback(young, T + 20 * BAR_MS, 4)).toEqual(INSUFFICIENT);
@@ -241,5 +243,23 @@ describe('relative strength', () => {
     expect(rsClass(-7, '4h')).toBe('loss3');
     expect(rsClass(-7, '24h')).toBe('loss2');
     expect(legendFor('rs', '4h').stops.map((s) => s.label)).toEqual(['≤ −6%', '−3%', '−1%', '相近', '+1%', '+3%', '≥ +6%']);
+  });
+});
+
+describe('breadth', () => {
+  it('counts rising and falling bars, and those with volume, among contracts it can judge', async () => {
+    const { breadthOf } = await import('../src/lib/breadth');
+    const ok = (value: number) => ({ kind: 'ok' as const, value });
+    const m = (ret: number, rvol: number, barTime = 100) => ({ barTime, ret15: ok(ret), rvol: ok(rvol) });
+    const top = ['A', 'B', 'C', 'D', 'E', 'F'].map((s) => ({ symbol: s, base: s, price: 1, changePct: 0, turnover24h: 1, turnoverApprox: false }));
+    const b = breadthOf(top, {
+      A: m(0.5, 3),
+      B: m(0.2, 1),
+      C: m(-0.4, 2),
+      D: m(0, 5),
+      E: { barTime: 100, ret15: { kind: 'pending' }, rvol: ok(4) },
+      F: m(-1, 0.5, 85),
+    } as never);
+    expect(b).toEqual({ judged: 5, up: 2, down: 2, upWithVolume: 1, downWithVolume: 1, barTime: 100 });
   });
 });

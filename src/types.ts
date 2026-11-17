@@ -13,6 +13,9 @@ export interface Ticker {
   turnover24h: number;
   /** true when the exchange does not report USDT turnover and we derived it. */
   turnoverApprox: boolean;
+  /** Best bid and ask; NaN when the exchange did not supply them. */
+  bid?: number;
+  ask?: number;
 }
 
 /** One 15-minute candle reduced to what the metrics need. */
@@ -20,6 +23,8 @@ export interface Bar {
   /** Bar open time, ms since epoch. */
   t: number;
   open: number;
+  high: number;
+  low: number;
   close: number;
   /** Turnover in USDT for the bar. */
   turnover: number;
